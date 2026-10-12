@@ -133,8 +133,57 @@ migration state. Returns a non-2xx status when the database is unreachable.
 
 ## Decisions
 
-_Filled in during the sprint._
+Recorded during the sprint.
+
+| Question | Decision | Why |
+|----------|----------|-----|
+| Language / runtime | PHP 8.5, no framework, **zero third-party dependencies** | cPanel has no `composer` (`ARCH.md` §1); a hand-written PSR-4 autoloader keeps the upload to plain PHP. A framework would have to be vendored over FTP. |
+| Local database | Docker, **`mariadb:10.11` pinned** | Matches the cPanel default (`cPanel ≥122`) rather than drifting to brew's 13.x. Lets Sprint 3 test the real atomic-claim path. |
+| Dev server | `php -S` built-in server | No Apache needed locally; production uses `public/.htaccess`. |
+| Migrations are **not atomic** | Statements run sequentially; ledger recorded only on success | MySQL/MariaDB perform an **implicit commit** around DDL, so a `CREATE TABLE` cannot be rolled back. Wrapping DDL in an explicit transaction is actively harmful — the transaction is silently committed and the final `commit()` throws "no active transaction". Found by running it. |
+| Capability detection | `SKIP LOCKED` support is decided by **executing** the statement against a temporary InnoDB table inside a rolled-back transaction | Version checks miss vendor backports and forks. Verified `true` on 10.11.19. |
+| `JSON` columns | Native `JSON` type in the schema; `Database::probeJsonType()` records which it is | MariaDB aliases `JSON` to `LONGTEXT` + a check constraint. Both work; the health endpoint reports `alias` so it is never a surprise. |
+| Status vocabularies | `ENUM` columns rather than free strings | Makes `FR-10` a database-level guarantee, not an application convention. Invalid roles are rejected by the engine. |
+| Admin access | Admins bypass the ownership check; students and teachers do not | Sprint 1 open question — per-student vs shared login is unresolved, so the model supports both. |
+| Self-service admin signup | Allowed **only** when the `users` table is empty | Prevents privilege escalation after bootstrap. Manual `bin/` provisioning otherwise. |
+| Session hardening | `HttpOnly` + `SameSite=Lax`, id regenerated on login, record **destroyed** on logout | Regeneration blocks session fixation; destroying (not clearing) is what makes `AC-6` pass — a cleared session leaves a replayable cookie. |
+| Unknown-email timing | A dummy hash comparison runs when the email is unknown | Keeps response time from revealing whether an account exists. |
+| Preflight lives in | `worker/preflight.py`, standalone Python 3 (stdlib only) | Must run before the worker exists (Sprint 4), and must work on any machine. |
+
+### Two bugs worth remembering
+
+Both were found by running the code, not by reading it:
+
+1. **DDL kills explicit transactions** (above). The migration runner was written
+   transactionally and failed on first run.
+2. **`information_schema.STATISTICS` is cached** and lags immediately after DDL.
+   The `AC-1` index assertion failed against a table whose index genuinely
+   existed. Fixed in the test with `ANALYZE TABLE` (whose result set must itself
+   be drained, or the next query fails with "unbuffered queries are active").
+
+### Preflight capability report
+
+Recorded from the machine used during this sprint. **The production worker machine
+has not been measured** — re-run `python3 worker/preflight.py` there before
+starting Sprint 4.
+
+```
+platform : Darwin arm64 / python 3.14.8
+disk     : 0.69 GB free  (need 15.0 GB)  FAIL
+memory   : 0.29 GB available / 8.0 GB total  FAIL
+asr tier : NONE FITTING (budget -1.71 GB)
+binary   : ffmpeg      FAIL - not found on PATH
+binary   : tesseract   FAIL - not found on PATH
+binary   : python3     OK
+PREFLIGHT FAILED (exit 1)
+```
+
+`AC-9` is satisfied — it exits non-zero naming each specific shortfall.
+`AC-10` is **not yet satisfied**: no machine has passed this check.
 
 ## Status
 
-`not-started`
+`building` — code complete, **30/30 local acceptance checks passing**, but `AC-10`
+(blocked) awaits a machine that passes preflight, and the two host facts
+(DB version, upload ceiling) remain unverified against real cPanel.
+

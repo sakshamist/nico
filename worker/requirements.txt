@@ -1,0 +1,2 @@
+# Sprint 1: preflight is stdlib-only by design so it can run before any
+# dependency is installed. Sprint 4 adds the processing stack.

@@ -1,0 +1,25 @@
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # Route everything through the front controller.
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteRule ^ index.php [QSA,L]
+</IfModule>
+
+<IfModule mod_headers.c>
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-Frame-Options "SAMEORIGIN"
+    Header always set Referrer-Policy "same-origin"
+</IfModule>
+
+# Never serve application internals directly.
+<FilesMatch "\.(env|sql|log|md)$">
+    Require all denied
+</FilesMatch>
+
+# storage/ holds user uploads and logs; it must sit outside the webroot in
+# production. This is a second line of defence, not the primary control (FR-15).
+<IfModule mod_rewrite.c>
+    RewriteRule ^storage/ - [F,L]
+</IfModule>

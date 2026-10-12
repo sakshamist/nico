@@ -44,4 +44,21 @@ template, and the constraints already verified during planning.
 
 ## Status
 
-Design complete. Implementation has not started — Sprint 1 is next.
+Sprint 1 (Foundations) is built and verified locally — 30/30 acceptance checks
+passing. Two items remain open: the compute machine has not yet passed its
+environment preflight, and the cPanel host's database version and upload ceiling
+are still unverified.
+
+### Running locally
+
+```bash
+./dev.sh db:start     # start the pinned MariaDB 10.11 container
+./dev.sh migrate      # create the schema
+./dev.sh serve        # edge app on http://127.0.0.1:8080
+./dev.sh test         # verify Sprint 1 acceptance criteria
+./dev.sh preflight    # check the compute machine can run the pipeline
+```
+
+`dev.sh --help` lists everything. The edge app has no third-party PHP dependencies,
+since cPanel offers no `composer`.
+

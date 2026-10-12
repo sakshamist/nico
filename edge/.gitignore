@@ -1,0 +1,5 @@
+# Local config holds real credentials — never commit it.
+.env
+storage/logs/*.log
+storage/files/*
+!storage/files/.gitkeep
