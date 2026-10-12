@@ -52,7 +52,7 @@ Shared vocabulary. Use these words exactly; do not invent synonyms.
 
 | # | Sprint | Deliverable | Depends on | Status |
 |---|--------|-------------|------------|--------|
-| 1 | [Foundations](SPRINT-01-foundations.md) | Environment, schema, auth | — | not-started |
+| 1 | [Foundations](SPRINT-01-foundations.md) | Environment, schema, auth | — | building (30/30 local) |
 | 2 | [Upload & File Management](SPRINT-02-upload-file-management.md) | Files stored and listed | 1 | not-started |
 | 3 | [Job Queue & Worker Protocol](SPRINT-03-job-queue-worker-protocol.md) | Queue + edge API | 1 | not-started |
 | 4 | [Mac Worker & Ingestion](SPRINT-04-mac-worker-ingestion.md) | Worker + extracted text | 2, 3 | not-started |
@@ -60,6 +60,8 @@ Shared vocabulary. Use these words exactly; do not invent synonyms.
 | 6 | [Delivery & Hardening](SPRINT-06-delivery-hardening.md) | UI, PWA/blog, ops | 3, 4, 5 | not-started |
 
 Sprints 1–3 are sequential. Sprint 4 needs 2 and 3. Sprints 5 and 6 build on 4.
+
+**Current state, blockers, and next steps: [`STATUS.md`](STATUS.md).**
 
 ---
 

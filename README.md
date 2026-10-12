@@ -23,6 +23,8 @@ Processing happens out of sight, so the site stays fast while it works in the ba
 - [`FLOW.md`](FLOW.md) — how the project works, step by step.
 - [`ARCH.md`](ARCH.md) — the design and why it was chosen.
 - [`specs/`](specs/) — the build plan: what gets built, in what order, and how we know each piece is done.
+- [`specs/STATUS.md`](specs/STATUS.md) — current progress, blockers, and next steps.
+- [`docs/LOCALDEV.md`](docs/LOCALDEV.md) — local setup and cPanel deployment.
 
 ## Build plan
 
@@ -44,10 +46,19 @@ template, and the constraints already verified during planning.
 
 ## Status
 
-Sprint 1 (Foundations) is built and verified locally — 30/30 acceptance checks
-passing. Two items remain open: the compute machine has not yet passed its
-environment preflight, and the cPanel host's database version and upload ceiling
-are still unverified.
+**Sprint 1 of 6 is built and locally verified** — 30/30 acceptance checks passing.
+Sprints 2–6 are specified but not started.
+
+See [`specs/STATUS.md`](specs/STATUS.md) for what is done, what is blocked, and
+what comes next.
+
+Three items need attention:
+
+- **Compute disk is at 100%** (717 MB free; ~15 GB needed) — blocks Sprint 4.
+- **No machine has passed preflight yet** — closes AC-10, confirms the ASR tier.
+- **cPanel host facts unverified** — database version and the 2 MB upload ceiling.
+
+Sprint 3 (job queue) is unblocked and is the recommended next step.
 
 ### Running locally
 
@@ -60,5 +71,7 @@ are still unverified.
 ```
 
 `dev.sh --help` lists everything. The edge app has no third-party PHP dependencies,
-since cPanel offers no `composer`.
+since cPanel offers no `composer`. See [`docs/LOCALDEV.md`](docs/LOCALDEV.md) for
+the full local setup and troubleshooting.
+
 
