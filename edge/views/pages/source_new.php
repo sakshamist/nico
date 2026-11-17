@@ -3,7 +3,7 @@
 <?php $maxTextBytes = (int) ($maxTextBytes ?? (2 * 1024 * 1024)); ?>
 <section class="page-head">
     <div>
-        <p class="eyebrow">M1 + M2 knowledge</p>
+        <p class="eyebrow">Add source</p>
         <h1>Add a knowledge source</h1>
         <p class="muted">Paste a note, brief, or transcript, or upload a PDF. Sources are stored locally and split into retrieval chunks.</p>
     </div>

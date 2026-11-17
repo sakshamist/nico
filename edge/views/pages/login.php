@@ -1,7 +1,7 @@
 <?php /** @var string|null $error */ ?>
 <section class="auth-card">
     <h1>Welcome back</h1>
-    <p class="muted">Sign in to the Nico learning workspace.</p>
+    <p class="muted">Sign in to the Nico learning app.</p>
     <?php if ($error !== null): ?>
         <div class="flash flash-error"><?= e($error) ?></div>
     <?php endif; ?>

@@ -4,9 +4,9 @@
 ?>
 <section class="page-head">
     <div>
-        <p class="eyebrow">M5 people</p>
+        <p class="eyebrow">Profile</p>
         <h1>Your capability profile</h1>
-        <p class="muted">M5 uses these capabilities, availability, and concurrency cap to match tasks.</p>
+        <p class="muted">Nico uses these capabilities, availability, and concurrency cap to match tasks.</p>
     </div>
 </section>
 

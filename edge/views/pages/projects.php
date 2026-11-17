@@ -1,7 +1,7 @@
 <?php /** @var list<array<string,mixed>> $projects */ ?>
 <section class="page-head">
     <div>
-        <p class="eyebrow">M5 workspaces</p>
+        <p class="eyebrow">Projects</p>
         <h1>Projects</h1>
         <p class="muted">A project hosts tasks, knowledge, artifacts, hackathons, and events.</p>
     </div>

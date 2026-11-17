@@ -6,7 +6,7 @@
 ?>
 <section class="page-head">
     <div>
-        <p class="eyebrow">M2 knowledge</p>
+        <p class="eyebrow">Library</p>
         <h1>Knowledge library</h1>
         <p class="muted">Notes, briefs, and uploaded PDFs, chunked for grounded retrieval and generation.</p>
     </div>

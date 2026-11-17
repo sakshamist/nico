@@ -7,7 +7,7 @@ $citations = is_array($content) ? ($content['citations'] ?? []) : [];
 ?>
 <section class="page-head">
     <div>
-        <p class="eyebrow"><?= e($artifact['module']) ?> · <?= e($artifact['type']) ?> · version <?= (int) $artifact['version'] ?></p>
+        <p class="eyebrow"><?= e(ucfirst((string) $artifact['type'])) ?> · version <?= (int) $artifact['version'] ?></p>
         <h1><?= e($content['title'] ?? ucfirst((string) $artifact['type'])) ?></h1>
         <?php if ($project !== null): ?>
             <p class="muted"><a href="/app/projects/<?= (int) $project['id'] ?>"><?= e($project['title']) ?></a></p>

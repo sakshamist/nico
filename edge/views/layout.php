@@ -34,8 +34,8 @@
     <?= $content ?>
 </main>
 <footer class="footer">
-    <span>Nico edge workspace</span>
-    <span>M2 knowledge · M3 quizzes · M4 lessons · M5 projects · M6 activities · M7 reports · M8 delivery</span>
+    <span>Nico</span>
+    <span>Learn, build, and track progress.</span>
 </footer>
 <script src="/assets/app.js"></script>
 </body>

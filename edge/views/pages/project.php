@@ -19,7 +19,7 @@ foreach ($tasks as $task) {
 ?>
 <section class="page-head">
     <div>
-        <p class="eyebrow">Project workspace</p>
+        <p class="eyebrow">Project</p>
         <h1><?= e($project['title']) ?></h1>
         <p class="muted"><?= e($project['description'] ?: 'No description yet.') ?></p>
         <div class="row">

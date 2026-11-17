@@ -12,6 +12,7 @@ use Nico\Edge\Auth\UserRepository;
 use Nico\Edge\Generation\LessonService;
 use Nico\Edge\Generation\QuizService;
 use Nico\Edge\Generation\ReportService;
+use Nico\Edge\Interns\InternRepository;
 use Nico\Edge\Knowledge\KnowledgeRepository;
 use Nico\Edge\Knowledge\HybridSearchService;
 use Nico\Edge\Knowledge\PdfIngestionService;
@@ -37,17 +38,19 @@ final class WebRoutes
     public static function register(App $app): void
     {
         $app->get('/', static function (): void {
-            if (self::currentUser() === null) {
+            $user = self::currentUser();
+            if ($user === null) {
                 View::redirect('/login');
             }
 
-            View::redirect('/app');
+            View::redirect(self::homeFor($user));
         });
 
         // ---------------------------------------------------------------- auth
         $app->get('/login', static function (): void {
-            if (self::currentUser() !== null) {
-                View::redirect('/app');
+            $current = self::currentUser();
+            if ($current !== null) {
+                View::redirect(self::homeFor($current));
             }
 
             View::render('login', ['error' => null], null, 'Sign in');
@@ -78,12 +81,13 @@ final class WebRoutes
             $session->put('user_id', (int) $user['id']);
             $session->put('role', (string) $user['role']);
 
-            View::redirect('/app');
+            View::redirect(self::homeFor($user));
         });
 
         $app->get('/register', static function (): void {
-            if (self::currentUser() !== null) {
-                View::redirect('/app');
+            $current = self::currentUser();
+            if ($current !== null) {
+                View::redirect(self::homeFor($current));
             }
 
             View::render('register', ['error' => null], null, 'Create account');
@@ -135,7 +139,7 @@ final class WebRoutes
             $session->put('user_id', $id);
             $session->put('role', $role);
 
-            View::redirect('/app');
+            View::redirect($role === 'admin' ? '/admin/interns' : '/intern');
         });
 
         $app->post('/logout', static function (): void {
@@ -150,15 +154,267 @@ final class WebRoutes
         // ------------------------------------------------------------ dashboard
         $app->get('/app', static function (): void {
             $user = self::requireUser();
-            $userId = (int) $user['id'];
-            $role = (string) $user['role'];
-
-            View::render('dashboard', [
-                'projects'  => (new ProjectRepository())->listForUser($userId),
-                'artifacts' => (new ArtifactRepository())->listForUser($userId, $role),
-                'progress'  => (new ProgressRepository())->listForUser($userId),
-            ], $user, 'Dashboard');
+            View::redirect(self::homeFor($user));
         });
+
+        // ------------------------------------------------------------ intern app
+        $app->get('/intern', static function (): void {
+            $user = self::requireIntern();
+            $internId = (int) $user['id'];
+            $repo = new InternRepository();
+
+            View::render('intern/home', [
+                'sources'   => $repo->assignedSources($internId),
+                'artifacts' => $repo->artifacts($internId),
+                'attempts'  => $repo->attempts($internId),
+            ], $user, 'Home', 'intern');
+        });
+
+        $app->get('/intern/course', static function (): void {
+            $user = self::requireIntern();
+            $internId = (int) $user['id'];
+            $repo = new InternRepository();
+
+            View::render('intern/course', [
+                'sources'   => $repo->assignedSources($internId),
+                'artifacts' => $repo->artifacts($internId),
+            ], $user, 'Course', 'intern');
+        });
+
+        $app->get('/intern/learn/{id}', static function (App $app, array $params): void {
+            $user = self::requireIntern();
+            $internId = (int) $user['id'];
+            $artifact = (new InternRepository())->artifact($internId, (int) $params['id']);
+
+            if ($artifact === null) {
+                View::notFound();
+            }
+
+            if ($artifact['module'] === 'M3') {
+                $pdo = Database::pdo();
+                $attempts = new AttemptRepository($pdo, new ArtifactRepository($pdo));
+                $attempt = $attempts->latestFor((int) $artifact['id'], $internId);
+
+                if ($attempt !== null) {
+                    View::redirect('/intern/attempts/' . $attempt['id']);
+                }
+
+                View::render('intern/quiz_intro', ['artifact' => $artifact], $user, 'Quiz', 'intern');
+                return;
+            }
+
+            if ($artifact['module'] !== 'M4') {
+                View::notFound();
+            }
+
+            $state = (new ProgressRepository())->get($internId, (int) $artifact['id']);
+            $steps = $artifact['content']['steps'] ?? [];
+            $position = min((int) ($state['position'] ?? 0), max(0, count($steps) - 1));
+
+            View::render('intern/lesson', [
+                'artifact' => $artifact,
+                'step'     => $steps[$position] ?? null,
+                'position' => $position,
+                'total'    => count($steps),
+                'progress' => $state,
+            ], $user, (string) ($artifact['content']['title'] ?? 'Lesson'), 'intern');
+        });
+
+        $app->post('/intern/artifacts/{id}/start', self::post(static function (App $app, array $params): void {
+            $user = self::requireIntern();
+            $internId = (int) $user['id'];
+            $artifact = (new InternRepository())->artifact($internId, (int) $params['id']);
+
+            if ($artifact === null || $artifact['module'] !== 'M3') {
+                View::notFound();
+            }
+
+            $pdo = Database::pdo();
+            $attempts = new AttemptRepository($pdo, new ArtifactRepository($pdo));
+            $attempt = $attempts->start((int) $artifact['id'], $internId);
+
+            View::redirect('/intern/attempts/' . $attempt['id']);
+        }, '/intern'));
+
+        $app->post('/intern/learn/{id}/progress', self::post(static function (App $app, array $params): void {
+            $user = self::requireIntern();
+            $internId = (int) $user['id'];
+            $artifact = (new InternRepository())->artifact($internId, (int) $params['id']);
+
+            if ($artifact === null || $artifact['module'] !== 'M4') {
+                View::notFound();
+            }
+
+            $steps = $artifact['content']['steps'] ?? [];
+            $position = max(0, min(count($steps) - 1, (int) ($_POST['position'] ?? 0)));
+            $progressRepo = new ProgressRepository();
+            $current = $progressRepo->get($internId, (int) $artifact['id']);
+            $completed = isset($_POST['completed'])
+                ? (bool) $_POST['completed']
+                : (bool) ($current['completed'] ?? false);
+            $progressRepo->save($internId, (int) $artifact['id'], $position, $completed);
+
+            View::redirect('/intern/learn/' . $artifact['id']);
+        }, '/intern'));
+
+        $app->get('/intern/attempts/{id}', static function (App $app, array $params): void {
+            $user = self::requireIntern();
+            $internId = (int) $user['id'];
+            $pdo = Database::pdo();
+            $attempts = new AttemptRepository($pdo, new ArtifactRepository($pdo));
+            $attempt = $attempts->find((int) $params['id']);
+
+            if ($attempt === null || (int) $attempt['user_id'] !== $internId) {
+                View::notFound();
+            }
+
+            $artifact = (new InternRepository())->artifact($internId, (int) $attempt['artifact_id']);
+            if ($artifact === null) {
+                View::notFound();
+            }
+
+            $questions = $artifact['content']['questions'] ?? [];
+            $current = null;
+            foreach ($questions as $index => $_question) {
+                if (($attempt['answers'][$index] ?? null) === null) {
+                    $current = $index;
+                    break;
+                }
+            }
+
+            View::render('intern/quiz', [
+                'artifact' => $artifact,
+                'attempt'  => $attempt,
+                'current'  => $current,
+                'question' => $current === null ? null : $questions[$current],
+            ], $user, (string) ($artifact['content']['title'] ?? 'Quiz'), 'intern');
+        });
+
+        $app->post('/intern/attempts/{id}/answer', self::post(static function (App $app, array $params): void {
+            $user = self::requireIntern();
+            $internId = (int) $user['id'];
+            $pdo = Database::pdo();
+            $attempts = new AttemptRepository($pdo, new ArtifactRepository($pdo));
+            $attempt = $attempts->find((int) $params['id']);
+
+            if ($attempt === null || (int) $attempt['user_id'] !== $internId) {
+                View::notFound();
+            }
+
+            $attempts->answer(
+                (int) $params['id'],
+                $internId,
+                (int) ($_POST['question_index'] ?? 0),
+                (int) ($_POST['option_index'] ?? 0),
+            );
+
+            View::redirect('/intern/attempts/' . (int) $params['id']);
+        }, '/intern'));
+
+        // ------------------------------------------------------------ admin app
+        $app->get('/admin/interns', static function (): void {
+            $user = self::requireAdmin();
+
+            View::render('admin/interns', [
+                'interns' => (new InternRepository())->interns(),
+            ], $user, 'Interns', 'admin');
+        });
+
+        $app->get('/admin/interns/{id}', static function (App $app, array $params): void {
+            $user = self::requireAdmin();
+            $repo = new InternRepository();
+            $intern = $repo->find((int) $params['id']);
+
+            if ($intern === null) {
+                View::notFound();
+            }
+
+            $pdf = new PdfIngestionService();
+            $tab = (string) Request::query('tab', 'material') === 'progress' ? 'progress' : 'material';
+            $internId = (int) $intern['id'];
+
+            View::render('admin/intern_detail', [
+                'intern'       => $intern,
+                'tab'          => $tab,
+                'sources'      => $repo->assignedSources($internId),
+                'progress'     => $repo->progress($internId),
+                'attempts'     => $repo->attempts($internId),
+                'maxPdfBytes'  => $pdf->maxBytes(),
+                'maxTextBytes' => $pdf->maxTextBytes(),
+            ], $user, (string) $intern['email'], 'admin');
+        });
+
+        $app->post('/admin/interns/{id}/material', self::post(static function (App $app, array $params): void {
+            $user = self::requireAdmin();
+            $internId = (int) $params['id'];
+            $repo = new InternRepository();
+            $intern = $repo->find($internId);
+
+            if ($intern === null) {
+                View::notFound();
+            }
+
+            $created = (new KnowledgeRepository())->createSource(
+                $internId,
+                'student',
+                (string) ($_POST['title'] ?? ''),
+                (string) ($_POST['body'] ?? ''),
+                (string) ($_POST['kind'] ?? 'note'),
+                null,
+            );
+            $repo->assignSource($internId, $created['source_id'], (int) $user['id']);
+
+            View::flash('success', 'Material added to the intern’s course.');
+            View::redirect('/admin/interns/' . $internId . '?tab=material');
+        }, '/admin/interns'));
+
+        $app->post('/admin/interns/{id}/material/pdf', self::post(static function (App $app, array $params): void {
+            $user = self::requireAdmin();
+            $internId = (int) $params['id'];
+            $repo = new InternRepository();
+            $intern = $repo->find($internId);
+
+            if ($intern === null) {
+                View::notFound();
+            }
+
+            $created = (new PdfIngestionService())->ingest(
+                $_FILES['pdf'] ?? [],
+                (string) ($_POST['extracted_text'] ?? ''),
+                $internId,
+                'student',
+                (string) ($_POST['title'] ?? ''),
+                null,
+                (string) ($_POST['page_segments'] ?? '[]'),
+            );
+            $repo->assignSource($internId, $created['source_id'], (int) $user['id']);
+
+            View::flash('success', 'PDF added to the intern’s course.');
+            View::redirect('/admin/interns/' . $internId . '?tab=material');
+        }, '/admin/interns'));
+
+        $app->post('/admin/interns/{id}/sources/{sourceId}/generate', self::post(static function (App $app, array $params): void {
+            $user = self::requireAdmin();
+            $internId = (int) $params['id'];
+            $sourceId = (int) $params['sourceId'];
+            $repo = new InternRepository();
+
+            if ($repo->find($internId) === null || !$repo->isAssigned($internId, $sourceId)) {
+                View::forbidden();
+            }
+
+            $type = (string) ($_POST['type'] ?? 'lesson');
+            if ($type === 'quiz') {
+                (new QuizService())->generateForSource($sourceId, $internId, 'student');
+            } elseif ($type === 'lesson') {
+                (new LessonService())->generateForSource($sourceId, $internId, 'student');
+            } else {
+                throw new \InvalidArgumentException('Unknown learning type.');
+            }
+
+            View::flash('success', 'Learning material generated.');
+            View::redirect('/admin/interns/' . $internId . '?tab=material');
+        }, '/admin/interns'));
 
         // --------------------------------------------------------------- profile
         $app->get('/app/profile', static function (): void {
@@ -1014,6 +1270,34 @@ final class WebRoutes
 
         if ($user === null) {
             View::redirect('/login');
+        }
+
+        return $user;
+    }
+
+    /** @param array<string,mixed> $user */
+    private static function homeFor(array $user): string
+    {
+        return (string) $user['role'] === 'admin' ? '/admin/interns' : '/intern';
+    }
+
+    /** @return array<string,mixed> */
+    private static function requireAdmin(): array
+    {
+        $user = self::requireUser();
+        if ((string) $user['role'] !== 'admin') {
+            View::forbidden();
+        }
+
+        return $user;
+    }
+
+    /** @return array<string,mixed> */
+    private static function requireIntern(): array
+    {
+        $user = self::requireUser();
+        if ((string) $user['role'] !== 'student') {
+            View::forbidden();
         }
 
         return $user;

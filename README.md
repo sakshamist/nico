@@ -1,9 +1,16 @@
 # Nico
 
-Nico turns learning sources into reusable knowledge, quizzes, lessons, project work, and reports. The working MVP is a server-rendered web app at `/app`.
+Nico turns learning sources into lessons, quizzes, project work, and reports. The product has two clean web interfaces:
+
+- **Intern app** at `/intern` — the learner’s space.
+- **Admin app** at `/admin` — the space for the person managing interns.
+
+`/app` redirects to the right app by role.
 
 ## What works today
 
+- Two role-gated apps: `/intern` for learners and `/admin` for managing interns. No shared dashboard.
+- **Slice A flow:** admin opens an intern → adds written/PDF material → generates a lesson/quiz → intern learns it → admin sees completion and quiz scores.
 - Accounts, sessions, roles, capability profiles, and project membership.
 - Text notes/briefs/transcripts and PDF upload.
 - PDF text is read in the browser with vendored pdf.js; `pdftotext` optionally re-checks it on the edge. Page numbers are kept on chunks.
@@ -23,6 +30,8 @@ Nico turns learning sources into reusable knowledge, quizzes, lessons, project w
 - Source-edit/reprocess flow with re-indexing.
 - cPanel storage driver; uploads use a local `STORAGE_PATH` placeholder.
 - Blog/PWA delivery and full publishing flow.
+- **Slice B:** intern/admin project screens, private/shared projects, and task management.
+- **Slice C:** reports, two-way messages, and intern personal notes inside the two apps.
 
 [`ARCH.md`](ARCH.md) and [`FLOW.md`](FLOW.md) describe the intended edge/compute architecture. The current MVP is deliberately synchronous and local-first.
 
@@ -31,23 +40,30 @@ Nico turns learning sources into reusable knowledge, quizzes, lessons, project w
 ```bash
 ./dev.sh db:start     # MariaDB 10.11 container
 cd edge && cp .env.example .env && cd ..
-./dev.sh migrate      # schema, currently migrations 001–007
+./dev.sh migrate      # schema, currently migrations 001–008
 ./dev.sh serve        # http://127.0.0.1:8080 (20 MB upload limit)
-./dev.sh test         # 30 Sprint 1 + 47 M0 + 74 M1–M8 checks
+./dev.sh test         # 30 Sprint 1 + 47 M0 + 74 M1–M8 + 14 interface checks
 ```
 
 Register at `http://127.0.0.1:8080/register`, then open `/app`. `./dev.sh stop` stops the dev server.
 
 ## Demo path
 
-1. Add a text note or upload a PDF from **Library → Add source**.
-2. Search the library for a phrase from the source. When Ollama is enabled, results are marked `hybrid`; otherwise `lexical`.
-3. From the source page, generate a quiz or lesson.
-4. Create a project, add tasks, and try best-fit or manual assignment.
-5. Add an event or hackathon, RSVP, form a team, and submit work.
-6. Generate a report and follow its citations back to the sources and work.
+**Admin**
+1. Sign in and open **Interns**.
+2. Open an intern.
+3. Add written material or a PDF.
+4. Generate a lesson and a quiz from that material.
+5. Open **Progress** to see completion and quiz scores.
 
-## How each module is broken down
+**Intern**
+1. Sign in and land on **Home**.
+2. Open **Course** to read assigned material.
+3. Open a lesson and click through the steps.
+4. Open a quiz, answer the questions, and read the feedback.
+5. Progress appears on the admin’s Progress tab.
+
+## Internal module map (for maintainers; not shown in the UI)
 
 ### M0 — Platform
 
@@ -147,9 +163,10 @@ Choose PDF → browser extracts text per page (pdf.js) → multipart POST with f
 ## Testing
 
 ```bash
-./dev.sh test          # 30 Sprint 1 + 47 M0 + 74 M1–M8 checks
+./dev.sh test          # 30 Sprint 1 + 47 M0 + 74 M1–M8 + 14 interface checks
 ./dev.sh test:m0       # M0 only
 ./dev.sh test:modules  # M1–M8 workflow only
+./dev.sh test:interfaces  # Slice A two-app flow only
 ```
 
 `./dev.sh migrate` is safe to re-run. PHP lint is clean across the repository.
@@ -162,8 +179,9 @@ edge/
   src/Ai/                Ollama client and AI interface
   src/Generation/        template + Ollama quiz/lesson/report generation
   src/Knowledge/         sources, chunks, PDF ingestion, vectors, hybrid search
+  src/Interns/           assigned material and intern progress views
   src/Auth,Http,Projects,Tasks,Activities,...  remaining domain modules
-  migrations/            re-runnable schema migrations 001–007
+  migrations/            re-runnable schema migrations 001–008
   storage/files/         uploaded PDFs, outside the webroot
   storage/vectors/       local embedding files, outside the webroot
   tests/                 acceptance checks

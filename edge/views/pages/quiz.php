@@ -9,7 +9,7 @@ $answered = count(array_filter($attempt['answers'], static fn ($a): bool => $a !
 ?>
 <section class="page-head">
     <div>
-        <p class="eyebrow">M3 quiz</p>
+        <p class="eyebrow">Quiz</p>
         <h1><?= e($content['title'] ?? 'Quiz') ?></h1>
         <p class="muted">
             <?= $current === null ? 'Complete' : 'Question ' . ($current + 1) . ' of ' . count($questions) ?>

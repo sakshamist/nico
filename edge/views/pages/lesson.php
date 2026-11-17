@@ -8,7 +8,7 @@ $content = $artifact['content'] ?? [];
 ?>
 <section class="page-head">
     <div>
-        <p class="eyebrow">M4 lesson · step <?= $position + 1 ?> of <?= max(1, $total) ?></p>
+        <p class="eyebrow">Lesson · step <?= $position + 1 ?> of <?= max(1, $total) ?></p>
         <h1><?= e($content['title'] ?? 'Lesson') ?></h1>
         <?php if (!empty($content['summary'])): ?>
             <p class="muted"><?= e($content['summary']) ?></p>

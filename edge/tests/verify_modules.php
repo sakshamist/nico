@@ -811,7 +811,7 @@ check('M7', 'regenerated report cites activities', $report2['status'] === 201 &&
 echo "\nM8  Delivery surface\n";
 
 $pages = [
-    '/app'                          => 200,
+    '/app'                          => 302,
     '/app/projects'                 => 200,
     "/app/projects/{$projectId}"     => 200,
     '/app/library'                  => 200,

@@ -5,7 +5,7 @@
 ?>
 <section class="page-head">
     <div>
-        <p class="eyebrow">Workspace</p>
+        <p class="eyebrow">Home</p>
         <h1>Your learning edge</h1>
         <p class="muted">Notes become knowledge, knowledge becomes lessons and quizzes, work becomes evidence.</p>
     </div>

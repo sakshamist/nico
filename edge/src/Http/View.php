@@ -16,6 +16,7 @@ final class View
         array $data = [],
         ?array $user = null,
         string $title = 'Nico',
+        string $layout = 'default',
     ): void {
         $session = new Session();
         $session->start();
@@ -40,7 +41,15 @@ final class View
         require $file;
         $content = (string) ob_get_clean();
 
-        require __DIR__ . '/../../views/layout.php';
+        $layoutFile = $layout === 'default'
+            ? __DIR__ . '/../../views/layout.php'
+            : __DIR__ . '/../../views/layouts/' . $layout . '.php';
+
+        if (!is_file($layoutFile)) {
+            throw new \RuntimeException("Missing layout: {$layout}");
+        }
+
+        require $layoutFile;
     }
 
     public static function csrf(?Session $session = null): string

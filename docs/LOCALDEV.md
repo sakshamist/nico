@@ -45,6 +45,7 @@ template.
 | `./dev.sh test` | Verify Sprint 1, M0, and M1–M8 workflow checks |
 | `./dev.sh test:m0` | M0 platform checks only |
 | `./dev.sh test:modules` | M1–M8 workflow checks only |
+| `./dev.sh test:interfaces` | Slice A two-app flow only |
 | `./dev.sh preflight` | Check the compute machine |
 | `./dev.sh preflight --json` | Machine-readable preflight output |
 

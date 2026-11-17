@@ -13,7 +13,7 @@ $rulesUrl = safe_url($activity['rules_url'] ?? null);
 ?>
 <section class="page-head">
     <div>
-        <p class="eyebrow">M6 <?= e($activity['kind']) ?></p>
+        <p class="eyebrow"><?= ucfirst(e($activity['kind'])) ?></p>
         <h1><?= e($activity['title']) ?></h1>
         <p class="muted"><?= e($activity['description'] ?: 'No description yet.') ?></p>
         <div class="row">
