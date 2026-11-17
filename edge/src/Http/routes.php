@@ -52,9 +52,13 @@ function routes(App $app): void
             $pdo = Database::pdo();
             $applied = $pdo->query('SELECT name FROM _migrations ORDER BY id')->fetchAll();
 
+            $migrationsDir = Config::get('MIGRATIONS_PATH', __DIR__ . '/../../migrations');
             $files = array_map(
                 'basename',
-                glob(Config::get('MIGRATIONS_PATH', __DIR__ . '/../../migrations') . '/*.sql') ?: []
+                array_merge(
+                    glob($migrationsDir . '/*.sql') ?: [],
+                    glob($migrationsDir . '/*.php') ?: [],
+                )
             );
             sort($files, SORT_STRING);
 
@@ -211,6 +215,13 @@ function routes(App $app): void
 
         Response::json(['user' => $user]);
     });
+
+    // ---------------------------------------------------------------
+    // M0 domain API + worker queue API
+    // ---------------------------------------------------------------
+    ApiRoutes::register($app);
+    WorkerRoutes::register($app);
+    WebRoutes::register($app);
 }
 
 /**

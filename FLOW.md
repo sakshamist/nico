@@ -1,5 +1,7 @@
 # Nico — How It Works
 
+> **Context note:** system flow reference. Active planning/tracking is modular — see [`docs/modules/README.md`](docs/modules/README.md). Earlier sprint-based specs are archived in [`docs/archive/sprints-2026/`](docs/archive/sprints-2026/) (OLD / not in use).
+
 ## Components
 
 - **Frontend (Web / Blog / PWA)** — where users log in, upload resources, and view generated content.

@@ -55,7 +55,10 @@ switch ($command) {
     case 'status':
         $applied = $pdo->query('SELECT name, applied_at FROM _migrations ORDER BY id')
             ->fetchAll();
-        $all = array_map('basename', glob(__DIR__ . '/../migrations/*.sql') ?: []);
+        $all = array_map('basename', array_merge(
+            glob(__DIR__ . '/../migrations/*.sql') ?: [],
+            glob(__DIR__ . '/../migrations/*.php') ?: [],
+        ));
         sort($all, SORT_STRING);
         $done = array_column($applied, 'name');
 

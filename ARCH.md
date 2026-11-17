@@ -1,5 +1,7 @@
 # Nico — Architecture & Design
 
+> **Context note:** system architecture reference. Active planning/tracking is modular — see [`docs/modules/README.md`](docs/modules/README.md). Earlier sprint-based specs are archived in [`docs/archive/sprints-2026/`](docs/archive/sprints-2026/) (OLD / not in use).
+
 This document explains the design behind how Nico works (see `FLOW.md` for the flow itself). It covers the environment constraints, the edge/compute split, each component's responsibilities, the data model, the worker protocol, and the trade-offs made.
 
 ## 1. Environment Constraints

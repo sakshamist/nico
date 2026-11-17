@@ -10,9 +10,14 @@ namespace Nico\Edge\Http;
  * cPanel shared hosting serves PHP through Apache, so all requests are routed
  * here. Routing is an explicit match rather than a dispatcher framework, keeping
  * the dependency count at zero for FTP upload.
+ *
+ * Routes may contain named placeholders (`/worker/jobs/{id}/heartbeat`); the
+ * captured values are passed to the handler as an associative array. Handlers
+ * that do not declare the second parameter simply ignore it.
  */
 final class App
 {
+    /** @var array<string,array<string,callable>> */
     private array $routes = [];
 
     public function get(string $path, callable $handler): void
@@ -25,22 +30,75 @@ final class App
         $this->routes['POST'][$path] = $handler;
     }
 
+    public function put(string $path, callable $handler): void
+    {
+        $this->routes['PUT'][$path] = $handler;
+    }
+
+    public function patch(string $path, callable $handler): void
+    {
+        $this->routes['PATCH'][$path] = $handler;
+    }
+
+    public function delete(string $path, callable $handler): void
+    {
+        $this->routes['DELETE'][$path] = $handler;
+    }
+
     public function run(): void
     {
         $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
         $path = $this->resolvePath();
+        $routes = $this->routes[$method] ?? [];
 
-        if (!isset($this->routes[$method][$path])) {
+        $handler = $routes[$path] ?? null;
+        $params = [];
+
+        if ($handler === null) {
+            foreach ($routes as $pattern => $candidate) {
+                if (!str_contains($pattern, '{')) {
+                    continue;
+                }
+
+                if (preg_match($this->compile($pattern), $path, $matches) === 1) {
+                    $handler = $candidate;
+
+                    foreach ($matches as $key => $value) {
+                        if (is_string($key)) {
+                            $params[$key] = $value;
+                        }
+                    }
+
+                    break;
+                }
+            }
+        }
+
+        if ($handler === null) {
             $this->notFound();
 
             return;
         }
 
         try {
-            ($this->routes[$method][$path])($this);
+            $handler($this, $params);
         } catch (\Throwable $e) {
             $this->serverError($e);
         }
+    }
+
+    /** Compiles `/jobs/{id}` into a named-capture regex. */
+    private function compile(string $pattern): string
+    {
+        $quoted = preg_quote($pattern, '#');
+
+        $regex = preg_replace_callback(
+            '/\\\\\{([a-zA-Z_][a-zA-Z0-9_]*)\\\\\}/',
+            static fn (array $m): string => '(?P<' . $m[1] . '>[^/]+)',
+            $quoted,
+        );
+
+        return '#^' . ($regex ?? $quoted) . '$#';
     }
 
     private function resolvePath(): string

@@ -11,9 +11,14 @@ use Throwable;
 /**
  * Forward-only migration runner (FR-2).
  *
- * Migrations are plain .sql files named NN_description.sql and are applied in
- * lexical order. Applied migrations are recorded, so running the runner twice is
- * a no-op (AC-1).
+ * Migrations are named NN_description.{sql,php} and applied in lexical order.
+ * SQL files hold plain DDL; PHP files hold schema changes that need runtime
+ * inspection (adding a column/index only when absent), which plain MySQL DDL
+ * cannot express portably across MariaDB and MySQL.
+ *
+ * Applied migrations are recorded, so running the runner twice is a no-op
+ * (AC-1). PHP migrations must therefore also be safe to re-run on a schema that
+ * already has their changes.
  */
 final class Migrator
 {
@@ -42,12 +47,19 @@ final class Migrator
                 continue;
             }
 
-            $sql = file_get_contents($this->directory . '/' . $name);
-            if ($sql === false) {
-                throw new RuntimeException("Unreadable migration: {$name}");
+            $path = $this->directory . '/' . $name;
+
+            if (str_ends_with($name, '.php')) {
+                $this->applyPhp($name, $path);
+            } else {
+                $sql = file_get_contents($path);
+                if ($sql === false) {
+                    throw new RuntimeException("Unreadable migration: {$name}");
+                }
+
+                $this->apply($name, $sql);
             }
 
-            $this->apply($name, $sql);
             $ran[] = $name;
         }
 
@@ -59,19 +71,17 @@ final class Migrator
     {
         $this->pdo->exec('SET FOREIGN_KEY_CHECKS=0');
 
-        foreach ($this->discover() as $name) {
-            $sql = (string) file_get_contents($this->directory . '/' . $name);
+        // Only forward migrations exist and they may be authored in PHP, so the
+        // schema is emptied from the catalogue rather than scraped from files.
+        $tables = $this->pdo->query(
+            'SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE()'
+        )->fetchAll(PDO::FETCH_COLUMN);
 
-            // Only forward migrations exist, so collect their DROP statements.
-            if (preg_match_all('/^DROP TABLE IF EXISTS\s+([a-z_]+);/mi', $sql, $m) > 0) {
-                foreach ($m[1] as $table) {
-                    $this->pdo->exec("DROP TABLE IF EXISTS {$table}");
-                }
-            }
+        foreach ($tables as $table) {
+            $this->pdo->exec('DROP TABLE IF EXISTS `' . $table . '`');
         }
 
         $this->pdo->exec('SET FOREIGN_KEY_CHECKS=1');
-        $this->pdo->exec('DROP TABLE IF EXISTS _migrations');
     }
 
     /**
@@ -104,10 +114,7 @@ final class Migrator
                 $this->pdo->exec($statement);
             }
 
-            $stmt = $this->pdo->prepare(
-                'INSERT INTO _migrations (name, applied_at) VALUES (:name, :at)'
-            );
-            $stmt->execute(['name' => $name, 'at' => gmdate('c')]);
+            $this->record($name);
         } catch (Throwable $e) {
             throw new RuntimeException(
                 "Migration {$name} failed: " . $e->getMessage()
@@ -116,6 +123,39 @@ final class Migrator
                 $e
             );
         }
+    }
+
+    /**
+     * Runs a PHP migration. The file must return a callable that receives the
+     * PDO handle and applies its changes idempotently.
+     */
+    private function applyPhp(string $name, string $path): void
+    {
+        $migration = require $path;
+
+        if (!is_callable($migration)) {
+            throw new RuntimeException("PHP migration {$name} must return a callable");
+        }
+
+        try {
+            $migration($this->pdo);
+            $this->record($name);
+        } catch (Throwable $e) {
+            throw new RuntimeException(
+                "Migration {$name} failed: " . $e->getMessage()
+                . ' (migrations are not atomic - re-run after fixing)',
+                0,
+                $e
+            );
+        }
+    }
+
+    private function record(string $name): void
+    {
+        $stmt = $this->pdo->prepare(
+            'INSERT INTO _migrations (name, applied_at) VALUES (:name, :at)'
+        );
+        $stmt->execute(['name' => $name, 'at' => gmdate('c')]);
     }
 
     private function ensureLedger(): void
@@ -140,7 +180,10 @@ final class Migrator
     /** @return list<string> */
     private function discover(): array
     {
-        $files = glob($this->directory . '/*.sql') ?: [];
+        $files = array_merge(
+            glob($this->directory . '/*.sql') ?: [],
+            glob($this->directory . '/*.php') ?: [],
+        );
         sort($files, SORT_STRING);
 
         return array_map(static fn (string $p): string => basename($p), $files);
