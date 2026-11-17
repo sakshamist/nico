@@ -13,6 +13,9 @@ use Nico\Edge\Generation\LessonService;
 use Nico\Edge\Generation\QuizService;
 use Nico\Edge\Generation\ReportService;
 use Nico\Edge\Knowledge\KnowledgeRepository;
+use Nico\Edge\Knowledge\HybridSearchService;
+use Nico\Edge\Knowledge\PdfIngestionService;
+use Nico\Edge\Knowledge\Storage;
 use Nico\Edge\People\ProfileRepository;
 use Nico\Edge\Progress\ProgressRepository;
 use Nico\Edge\Projects\MembershipRepository;
@@ -480,18 +483,33 @@ final class WebRoutes
             $user = self::requireUser();
             $projectId = Request::query('project_id');
             $query = trim((string) Request::query('q', ''));
+            $sourceIdsRaw = trim((string) Request::query('source_ids', ''));
+            $sourceIds = $sourceIdsRaw === ''
+                ? null
+                : array_values(array_filter(array_map('intval', explode(',', $sourceIdsRaw))));
             $repo = new KnowledgeRepository();
             $results = [];
+            $mode = 'lexical';
 
             if ($query !== '') {
-                $results = $repo->search(
-                    $query,
-                    (int) $user['id'],
-                    (string) $user['role'],
-                    $projectId === null ? null : (int) $projectId,
-                    null,
-                    20,
-                );
+                try {
+                    $results = $repo->search(
+                        $query,
+                        (int) $user['id'],
+                        (string) $user['role'],
+                        $projectId === null ? null : (int) $projectId,
+                        null,
+                        20,
+                        $sourceIds,
+                    );
+                } catch (\InvalidArgumentException $e) {
+                    View::flash('error', $e->getMessage());
+                    View::redirect('/app/library');
+                }
+
+                $ranked = (new HybridSearchService())->rank($results, $query);
+                $results = $ranked['results'];
+                $mode = $ranked['mode'];
             }
 
             View::render('library', [
@@ -502,14 +520,18 @@ final class WebRoutes
                 ),
                 'query'   => $query,
                 'results' => $results,
+                'mode'    => $mode,
             ], $user, 'Knowledge library');
         });
 
         $app->get('/app/library/new', static function (): void {
             $user = self::requireUser();
+            $pdf = new PdfIngestionService();
 
             View::render('source_new', [
-                'projects' => (new ProjectRepository())->listForUser((int) $user['id']),
+                'projects'      => (new ProjectRepository())->listForUser((int) $user['id']),
+                'maxPdfBytes'   => $pdf->maxBytes(),
+                'maxTextBytes'  => $pdf->maxTextBytes(),
             ], $user, 'Add knowledge source');
         });
 
@@ -527,6 +549,24 @@ final class WebRoutes
             );
 
             View::flash('success', 'Source stored and chunked.');
+            View::redirect('/app/sources/' . $created['source_id']);
+        }, '/app/library/new'));
+
+        $app->post('/app/library/pdf', self::post(static function (): void {
+            $user = self::requireUser();
+            $projectId = (int) ($_POST['project_id'] ?? 0);
+            $service = new PdfIngestionService();
+            $created = $service->ingest(
+                $_FILES['pdf'] ?? [],
+                (string) ($_POST['extracted_text'] ?? ''),
+                (int) $user['id'],
+                (string) $user['role'],
+                (string) ($_POST['title'] ?? ''),
+                $projectId > 0 ? $projectId : null,
+                (string) ($_POST['page_segments'] ?? '[]'),
+            );
+
+            View::flash('success', 'PDF ingested and chunked from its extracted text.');
             View::redirect('/app/sources/' . $created['source_id']);
         }, '/app/library/new'));
 
@@ -549,7 +589,40 @@ final class WebRoutes
                 'source'    => $source,
                 'chunks'    => $repo->chunks($sourceId),
                 'artifacts' => (new ArtifactRepository())->listForResource((int) $source['resource_id']),
+                'files'     => $repo->filesForResource((int) $source['resource_id']),
             ], $user, (string) $source['title']);
+        });
+
+        $app->get('/app/sources/{id}/download', static function (App $app, array $params): void {
+            $user = self::requireUser();
+            $sourceId = (int) $params['id'];
+            $repo = new KnowledgeRepository();
+
+            if (!$repo->canViewSource($sourceId, (int) $user['id'], (string) $user['role'])) {
+                View::forbidden();
+            }
+
+            $source = $repo->findSource($sourceId);
+            if ($source === null) {
+                View::notFound();
+            }
+
+            $file = $repo->rawFileForResource((int) $source['resource_id']);
+            if ($file === null) {
+                View::notFound();
+            }
+
+            $storage = new Storage();
+            $relativePath = (string) $file['path'];
+            if (!$storage->isFile($relativePath)) {
+                View::notFound();
+            }
+
+            Response::download(
+                $storage->absolutePath($relativePath),
+                (string) $file['mime'],
+                (string) ($file['original_name'] ?: ($source['title'] . '.pdf')),
+            );
         });
 
         $app->post('/app/sources/{id}/generate', self::post(static function (App $app, array $params): void {
@@ -1022,6 +1095,13 @@ final class WebRoutes
     private static function post(callable $handler, string $fallback): callable
     {
         return static function (App $app, array $params = []) use ($handler, $fallback): void {
+            $contentLength = (int) ($_SERVER['CONTENT_LENGTH'] ?? 0);
+            $postLimit = iniBytes((string) ini_get('post_max_size'));
+            if ($contentLength > $postLimit && $_POST === [] && $_FILES === []) {
+                View::flash('error', 'That upload is larger than this server allows.');
+                View::redirect($fallback);
+            }
+
             if (!View::verifyCsrf()) {
                 self::csrfFailure();
             }

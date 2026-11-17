@@ -3,3 +3,4 @@
 storage/logs/*.log
 storage/files/*
 !storage/files/.gitkeep
+storage/vectors/

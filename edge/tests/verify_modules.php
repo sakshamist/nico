@@ -17,12 +17,25 @@ declare(strict_types=1);
 require __DIR__ . '/../autoload.php';
 
 use Nico\Edge\Activities\ActivityRepository;
+use Nico\Edge\Ai\AiClientInterface;
+use Nico\Edge\Artifacts\ArtifactRepository;
+use Nico\Edge\Generation\AiContentService;
+use Nico\Edge\Generation\LessonService;
+use Nico\Edge\Generation\QuizService;
+use Nico\Edge\Projects\MembershipRepository;
+use Nico\Edge\Knowledge\EmbeddingIndexer;
+use Nico\Edge\Knowledge\HybridSearchService;
 use Nico\Edge\Knowledge\KnowledgeRepository;
+use Nico\Edge\Knowledge\PdfIngestionService;
+use Nico\Edge\Knowledge\PdfTextExtractor;
+use Nico\Edge\Knowledge\Storage;
+use Nico\Edge\Knowledge\VectorStore;
 use Nico\Edge\Projects\ProjectRepository;
 use Nico\Edge\Support\Config;
 use Nico\Edge\Support\Database;
 use Nico\Edge\Support\Migrator;
 
+putenv('OLLAMA_ENABLED=0');
 Config::boot(__DIR__ . '/../.env');
 
 $base = getenv('NICO_BASE_URL') ?: 'http://127.0.0.1:8080';
@@ -30,6 +43,51 @@ $base = getenv('NICO_BASE_URL') ?: 'http://127.0.0.1:8080';
 if (@file_get_contents($base . '/health') === false) {
     fwrite(STDERR, "Edge is not reachable at {$base}. Start it with ./dev.sh serve.\n");
     exit(2);
+}
+
+class UnavailablePdfTextExtractor extends PdfTextExtractor
+{
+    public function extract(string $absolutePath): ?string
+    {
+        return null;
+    }
+
+    /** @return list<array{page:int,text:string}>|null */
+    public function extractSegments(string $absolutePath): ?array
+    {
+        return null;
+    }
+}
+
+class FakeAiClient implements AiClientInterface
+{
+    private ?string $chatResponse = null;
+
+    public function setChatResponse(?string $response): void
+    {
+        $this->chatResponse = $response;
+    }
+
+    public function available(): bool
+    {
+        return true;
+    }
+
+    public function embed(string $text): ?array
+    {
+        $seed = unpack('N', hash('sha256', $text, true))[1];
+        $vector = [];
+        for ($i = 0; $i < 8; $i++) {
+            $vector[] = (($seed >> $i) & 1) === 1 ? 1.0 : 0.01;
+        }
+
+        return $vector;
+    }
+
+    public function chat(array $messages, array $options = []): ?string
+    {
+        return $this->chatResponse;
+    }
 }
 
 $passed = 0;
@@ -90,7 +148,13 @@ function http(
     $payload = substr($raw, $headerSize);
     $decoded = json_decode($payload, true);
 
-    return ['status' => $status, 'body' => is_array($decoded) ? $decoded : [], 'raw' => $payload];
+    return [
+        'status'  => $status,
+        'body'    => is_array($decoded) ? $decoded : [],
+        'raw'     => $payload,
+        'text'    => $payload,
+        'headers' => substr($raw, 0, $headerSize),
+    ];
 }
 
 /** @return array{status:int,body:array,raw:string} */
@@ -125,7 +189,85 @@ function httpForm(
     $payload = substr($raw, $headerSize);
     $decoded = json_decode($payload, true);
 
-    return ['status' => $status, 'body' => is_array($decoded) ? $decoded : [], 'raw' => $payload];
+    return [
+        'status'  => $status,
+        'body'    => is_array($decoded) ? $decoded : [],
+        'raw'     => $payload,
+        'text'    => $payload,
+        'headers' => substr($raw, 0, $headerSize),
+    ];
+}
+
+/** @return array{status:int,body:array,raw:string} */
+function httpUpload(
+    string $url,
+    array $fields,
+    string $filePath,
+    string $fileName,
+    string $mime,
+    ?string $jar = null,
+): array {
+    $ch = curl_init($url);
+    $fields['pdf'] = new CURLFile($filePath, $mime, $fileName);
+    $options = [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_CUSTOMREQUEST  => 'POST',
+        CURLOPT_HEADER         => true,
+        CURLOPT_TIMEOUT        => 30,
+        CURLOPT_POSTFIELDS     => $fields,
+    ];
+
+    if ($jar !== null) {
+        $options[CURLOPT_COOKIEJAR] = $jar;
+        $options[CURLOPT_COOKIEFILE] = $jar;
+    }
+
+    curl_setopt_array($ch, $options);
+    $raw = (string) curl_exec($ch);
+    $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+    $headerSize = (int) curl_getinfo($ch, CURLINFO_HEADER_SIZE);
+    $payload = substr($raw, $headerSize);
+    $decoded = json_decode($payload, true);
+
+    return [
+        'status'  => $status,
+        'body'    => is_array($decoded) ? $decoded : [],
+        'raw'     => $raw,
+        'text'    => $payload,
+        'headers' => substr($raw, 0, $headerSize),
+    ];
+}
+
+function pdfFixture(string $text): string
+{
+    $escaped = str_replace(['\\', '(', ')'], ['\\\\', '\\(', '\\)'], $text);
+    $stream = "BT /F1 12 Tf 72 720 Td ({$escaped}) Tj ET";
+    $objects = [
+        1 => '<< /Type /Catalog /Pages 2 0 R >>',
+        2 => '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+        3 => '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>',
+        4 => '<< /Length ' . strlen($stream) . " >>\nstream\n{$stream}\nendstream",
+        5 => '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    ];
+
+    $pdf = "%PDF-1.4\n";
+    $offsets = [];
+
+    foreach ($objects as $number => $body) {
+        $offsets[$number] = strlen($pdf);
+        $pdf .= "{$number} 0 obj\n{$body}\nendobj\n";
+    }
+
+    $xref = strlen($pdf);
+    $pdf .= 'xref' . "\n0 " . (count($objects) + 1) . "\n0000000000 65535 f \n";
+
+    for ($n = 1; $n <= count($objects); $n++) {
+        $pdf .= sprintf("%010d 00000 n \n", $offsets[$n]);
+    }
+
+    $pdf .= "trailer\n<< /Size " . (count($objects) + 1) . " /Root 1 0 R >>\nstartxref\n{$xref}\n%%EOF\n";
+
+    return $pdf;
 }
 
 /** @return array{id:int,jar:string,email:string} */
@@ -232,6 +374,188 @@ $bobSearch = http('POST', "{$base}/knowledge/search", [
 ], $bob['jar']);
 check('M2', 'non-member cannot search project scope', $bobSearch['status'] === 422);
 
+$source2 = http('POST', "{$base}/knowledge/sources", [
+    'title'      => 'Battery handling checklist',
+    'body'       => 'Battery handling requires insulated tools and a fire resistant charging area. Label every pack after charging.',
+    'kind'       => 'note',
+    'project_id' => $projectId,
+], $alice['jar']);
+$source2Id = (int) ($source2['body']['source']['id'] ?? 0);
+
+$filtered = http('POST', "{$base}/knowledge/search", [
+    'query'       => 'battery handling insulated tools',
+    'project_id'  => $projectId,
+    'source_ids'  => [$source2Id],
+], $alice['jar']);
+$filteredResults = $filtered['body']['results'] ?? [];
+check('M2', 'source_ids filter returns only authorized requested sources', $filtered['status'] === 200
+    && $filteredResults !== []
+    && array_unique(array_column($filteredResults, 'source_id')) === [$source2Id],
+    json_encode($filtered['body']));
+
+$bobPersonal = http('POST', "{$base}/knowledge/sources", [
+    'title' => 'Bob private notes',
+    'body'  => 'A private note about emergency stop checks.',
+    'kind'  => 'note',
+], $bob['jar']);
+$bobPersonalId = (int) ($bobPersonal['body']['source']['id'] ?? 0);
+$unauthorizedFilter = http('POST', "{$base}/knowledge/search", [
+    'query'      => 'emergency stop',
+    'source_ids' => [$bobPersonalId],
+], $alice['jar']);
+check('M2', 'source_ids filter rejects unauthorized source',
+    $unauthorizedFilter['status'] === 422, (string) $unauthorizedFilter['status']);
+
+check('M2', 'search reports lexical mode when Ollama is disabled',
+    ($search['body']['mode'] ?? '') === 'lexical', json_encode($search['body']));
+
+$fakeAi = new FakeAiClient();
+$vectorStore = new VectorStore(new Storage((string) Config::get('VECTOR_PATH', 'storage/vectors')));
+$indexer = new EmbeddingIndexer($pdo, $fakeAi, $vectorStore);
+$indexed = $indexer->index(
+    $sourceId,
+    (int) ($source['body']['source']['resource_id'] ?? 0),
+    (new KnowledgeRepository($pdo, null))->chunks($sourceId),
+);
+$refCount = (int) $pdo->query('SELECT COUNT(*) FROM knowledge_refs')->fetchColumn();
+check('M2', 'embeddings are indexed with model metadata', $indexed > 0 && $refCount >= $indexed,
+    'indexed=' . $indexed . ' refs=' . $refCount);
+
+$ranked = (new HybridSearchService($fakeAi, $vectorStore))->rank($results, 'emergency stop');
+check('M2', 'hybrid search reranks with vector scores', ($ranked['mode'] ?? '') === 'hybrid'
+    && isset($ranked['results'][0]['vector_score']), json_encode($ranked['mode'] ?? null));
+
+// ------------------------------------------------------------------ M1
+echo "\nM1  PDF ingestion\n";
+
+$libraryNew = http('GET', $base . '/app/library/new', [], $alice['jar']);
+preg_match('/name="_csrf" value="([a-f0-9]+)"/', $libraryNew['raw'], $pdfCsrfMatch);
+$pdfCsrf = $pdfCsrfMatch[1] ?? '';
+
+$pdfText = 'SERVER SAFETY PHRASE alpha bravo charlie';
+$browserText = 'BROWSER SAFETY PHRASE this should lose to server extraction';
+$pdfPath = (string) tempnam(sys_get_temp_dir(), 'nico_pdf_');
+file_put_contents($pdfPath, pdfFixture($pdfText));
+
+$pdfUpload = httpUpload(
+    $base . '/app/library/pdf',
+    [
+        '_csrf'         => $pdfCsrf,
+        'title'         => 'PDF safety upload',
+        'project_id'     => (string) $projectId,
+        'extracted_text' => $browserText,
+        'page_segments'  => json_encode([['page' => 1, 'text' => $pdfText]]),
+    ],
+    $pdfPath,
+    'safety notes.pdf',
+    'application/pdf',
+    $alice['jar'],
+);
+
+check('M1', 'PDF upload creates a document source', $pdfUpload['status'] === 302,
+    $pdfUpload['status'] . ' ' . substr($pdfUpload['text'], 0, 200));
+
+$pdfStmt = $pdo->prepare(
+    "SELECT id, resource_id, kind, body FROM knowledge_sources
+      WHERE title = 'PDF safety upload' ORDER BY id DESC LIMIT 1"
+);
+$pdfStmt->execute();
+$pdfSource = $pdfStmt->fetch();
+$pdfSourceId = (int) ($pdfSource['id'] ?? 0);
+
+$resourceStmt = $pdo->prepare('SELECT source_type, status FROM resources WHERE id = :id LIMIT 1');
+$resourceStmt->execute(['id' => (int) ($pdfSource['resource_id'] ?? 0)]);
+$pdfResource = $resourceStmt->fetch();
+
+check('M1', 'PDF source is a document backed by a pdf resource', $pdfSourceId > 0
+    && ($pdfSource['kind'] ?? '') === 'document'
+    && ($pdfResource['source_type'] ?? '') === 'pdf'
+    && ($pdfResource['status'] ?? '') === 'done', json_encode([$pdfSource, $pdfResource]));
+
+check('M1', 'server extraction wins over browser text', $pdfSource !== false
+    && str_contains((string) $pdfSource['body'], $pdfText)
+    && !str_contains((string) $pdfSource['body'], 'BROWSER SAFETY PHRASE'),
+    substr((string) ($pdfSource['body'] ?? ''), 0, 200));
+
+$fileStmt = $pdo->prepare(
+    "SELECT path, mime, bytes, sha256, original_name FROM files
+      WHERE resource_id = :resource AND kind = 'raw' ORDER BY id DESC LIMIT 1"
+);
+$fileStmt->execute(['resource' => (int) ($pdfSource['resource_id'] ?? 0)]);
+$pdfFile = $fileStmt->fetch();
+$storage = new Storage();
+$absolutePdf = is_array($pdfFile) ? $storage->absolutePath((string) $pdfFile['path']) : '';
+
+check('M1', 'PDF stored outside webroot with checksum and original name', is_array($pdfFile)
+    && str_starts_with((string) $pdfFile['path'], 'pdf/')
+    && ($pdfFile['original_name'] ?? '') === 'safety notes.pdf'
+    && (int) $pdfFile['bytes'] === filesize($pdfPath)
+    && $pdfFile['sha256'] === hash_file('sha256', $pdfPath)
+    && is_file($absolutePdf)
+    && !str_contains($absolutePdf, '/public/'), json_encode($pdfFile));
+
+$pdfChunks = (new KnowledgeRepository($pdo))->chunks($pdfSourceId);
+check('M2', 'PDF text is chunked for retrieval', $pdfChunks !== []
+    && str_contains(implode(' ', array_column($pdfChunks, 'text')), $pdfText),
+    json_encode(array_column($pdfChunks, 'text')));
+
+check('M2', 'PDF chunks carry page provenance', $pdfChunks !== []
+    && array_unique(array_column($pdfChunks, 'page')) === [1],
+    json_encode(array_column($pdfChunks, 'page')));
+
+$browserSegments = PdfIngestionService::parseSegments(
+    json_encode([['page' => 7, 'text' => 'Browser page seven text']]),
+    (int) Config::get('PDF_TEXT_MAX_BYTES', 2 * 1024 * 1024),
+);
+check('M2', 'browser page segments are preserved when server extraction is unavailable',
+    $browserSegments !== null
+    && ($browserSegments[0]['page'] ?? 0) === 7
+    && ($browserSegments[0]['text'] ?? '') === 'Browser page seven text',
+    json_encode($browserSegments));
+
+$download = http('GET', $base . "/app/sources/{$pdfSourceId}/download", [], $alice['jar']);
+check('M1', 'owner can download the original PDF', $download['status'] === 200
+    && str_starts_with($download['text'], '%PDF-')
+    && stripos($download['headers'], 'application/pdf') !== false,
+    substr($download['headers'], 0, 500));
+
+$guestDownload = http('GET', $base . "/app/sources/{$pdfSourceId}/download", [], $bob['jar']);
+check('M1', 'non-member cannot download the PDF', $guestDownload['status'] === 403,
+    (string) $guestDownload['status']);
+
+$fallbackService = new PdfIngestionService(null, new UnavailablePdfTextExtractor(), null);
+$fallbackText = $fallbackService->resolveText('BROWSER FALLBACK PHRASE', $pdfPath);
+check('M1', 'browser text is used when server extraction is unavailable',
+    ($fallbackText['extractor'] ?? '') === 'browser'
+        && ($fallbackText['body'] ?? '') === 'BROWSER FALLBACK PHRASE',
+    json_encode($fallbackText));
+
+$filesBefore = (int) $pdo->query('SELECT COUNT(*) FROM files')->fetchColumn();
+$badPath = (string) tempnam(sys_get_temp_dir(), 'nico_bad_');
+file_put_contents($badPath, 'this is not a pdf');
+$badUpload = httpUpload(
+    $base . '/app/library/pdf',
+    [
+        '_csrf'          => $pdfCsrf,
+        'title'          => 'Invalid PDF upload',
+        'extracted_text' => 'Some text that would otherwise be accepted.',
+    ],
+    $badPath,
+    'notes.txt',
+    'text/plain',
+    $alice['jar'],
+);
+$filesAfter = (int) $pdo->query('SELECT COUNT(*) FROM files')->fetchColumn();
+$invalidStmt = $pdo->prepare("SELECT COUNT(*) FROM knowledge_sources WHERE title = 'Invalid PDF upload'");
+$invalidStmt->execute();
+
+check('M1', 'non-PDF upload leaves no source or file row', $badUpload['status'] === 302
+    && $filesAfter === $filesBefore && (int) $invalidStmt->fetchColumn() === 0,
+    $badUpload['status'] . ' files ' . $filesBefore . '->' . $filesAfter);
+
+@unlink($pdfPath);
+@unlink($badPath);
+
 // ------------------------------------------------------------------ M3
 echo "\nM3  Quizzes and attempts\n";
 
@@ -266,6 +590,52 @@ check('M3', 'all-correct attempt scores full marks',
 
 $bobAttempt = http('GET', "{$base}/attempts/{$attemptId}", [], $bob['jar']);
 check('M3', 'attempts are private to their owner', $bobAttempt['status'] === 404);
+
+$aiChunks = (new KnowledgeRepository($pdo, null))->chunks($sourceId);
+$firstChunkId = (int) ($aiChunks[0]['id'] ?? 0);
+$fakeAi->setChatResponse(json_encode([
+    'questions' => [[
+        'prompt'       => 'What must be checked before a field test?',
+        'options'      => ['Hazard assessment', 'Weather app', 'Lunch plan'],
+        'answer_index' => 0,
+        'explanation'  => 'The source requires a hazard assessment first.',
+        'source_refs'  => [['chunk_id' => $firstChunkId]],
+    ]],
+]));
+$aiQuizService = new QuizService(
+    new KnowledgeRepository($pdo, null),
+    new ArtifactRepository($pdo),
+    new MembershipRepository($pdo),
+    new AiContentService($fakeAi),
+);
+$aiQuizId = $aiQuizService->generateForSource($sourceId, $alice['id'], 'student');
+$aiQuizArtifact = (new ArtifactRepository($pdo))->find($aiQuizId);
+check('M3', 'Ollama-generated quiz keeps grounded provenance',
+    str_starts_with((string) ($aiQuizArtifact['content']['generator'] ?? ''), 'ollama:')
+    && (int) ($aiQuizArtifact['content']['questions'][0]['source_refs'][0]['chunk_id'] ?? 0) === $firstChunkId,
+    json_encode($aiQuizArtifact['content']['generator'] ?? null));
+
+$fakeAi->setChatResponse(json_encode([
+    'steps' => [[
+        'title'      => 'Check the site',
+        'body'       => 'Complete a hazard assessment before the field test.',
+        'key_points' => ['hazard', 'assessment'],
+        'source_refs' => [['chunk_id' => $firstChunkId]],
+    ]],
+]));
+$aiLessonService = new LessonService(
+    new KnowledgeRepository($pdo, null),
+    new ArtifactRepository($pdo),
+    new MembershipRepository($pdo),
+    new AiContentService($fakeAi),
+);
+$aiLessonId = $aiLessonService->generateForSource($sourceId, $alice['id'], 'student');
+$aiLessonArtifact = (new ArtifactRepository($pdo))->find($aiLessonId);
+check('M4', 'Ollama-generated lesson keeps grounded provenance',
+    str_starts_with((string) ($aiLessonArtifact['content']['generator'] ?? ''), 'ollama:')
+    && (int) ($aiLessonArtifact['content']['steps'][0]['source_refs'][0]['chunk_id'] ?? 0) === $firstChunkId,
+    json_encode($aiLessonArtifact['content']['generator'] ?? null));
+$fakeAi->setChatResponse(null);
 
 // ------------------------------------------------------------------ M4
 echo "\nM4  Lessons and progress\n";

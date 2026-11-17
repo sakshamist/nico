@@ -1,7 +1,7 @@
 # M2 — Knowledge (retrieval & grounding)
 
-**Status:** implemented for authored text sources (M1 ingestion excluded); lexical retrieval with provenance, async/vector indexing pending.  
-**Depends on:** M0, M1.  
+**Status:** implemented for authored text and PDF sources with page-aware chunks, Ollama embeddings, and hybrid retrieval; re-index and async indexing jobs remain MVP exceptions.
+**Depends on:** M0, M1.
 **Enables:** M3, M4, M5, M6, M7.
 
 ## Purpose
@@ -37,10 +37,10 @@ Turn extracted content into retrievable knowledge so downstream modules generate
 
 ## Acceptance criteria
 - **AC-M2-1:** Extracted content is chunked with stable provenance back to source/resource (and segment/location where available).
-- **AC-M2-2:** Embeddings/index are produced and queryable for a resource/project scope via a defined retrieval interface.
+- **AC-M2-2:** Closed locally: Ollama `nomic-embed-text` embeddings are generated on ingest, stored as local vector files, referenced in `knowledge_refs`, and blended with lexical scores. Falls back to lexical mode when Ollama is unavailable. Keeping vectors local is an MVP trade-off; production should move them compute-side.
 - **AC-M2-3:** Retrieval returns relevant, scoped results only to authorized members/owners and includes provenance for citation.
-- **AC-M2-4:** Reprocessing/updates result in a consistent index (no stale/mixed versions served as current).
-- **AC-M2-5:** Indexing runs through the async job pipeline with correct status/failure handling per M0.
+- **AC-M2-4:** Not implemented (MVP exception). Safe only because source text cannot be edited today. **Hard dependency:** adding any source-edit/reprocess feature requires re-indexing before that feature ships, otherwise stale chunks and vectors can be served.
+- **AC-M2-5:** Not implemented (MVP exception). Closing it requires enqueuing `chunk`/`embed` jobs through M0 and adding worker handlers; current indexing is synchronous and best-effort.
 
 ## Dependencies & constraints
 - Embedding stack aligned with compute preflight/resources (validated path: `nomic-embed-text` via Ollama, 768 dims) — vectors on compute, refs on edge.

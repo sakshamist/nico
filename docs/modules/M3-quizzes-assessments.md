@@ -1,7 +1,7 @@
 # M3 — Quizzes & Assessments (leg)
 
-**Status:** implemented: grounded MCQ generation, private click-next attempts, server-side scoring/feedback.  
-**Depends on:** M0, M1, M2.  
+**Status:** implemented: grounded MCQ generation (template + Ollama), private click-next attempts, server-side scoring/feedback; synchronous generation is an MVP exception.
+**Depends on:** M0, M1, M2.
 **Enables:** M7, M8.
 
 ## Purpose
@@ -34,7 +34,7 @@ Turn ingested knowledge into assessments that check understanding — quizzes, c
 - **AC-M3-2:** Questions include answer/explanation (and rubric/feedback where defined) traceable to sources.
 - **AC-M3-3:** A user can take an assessment and receive stored results/feedback; results are scoped to authorized users/projects.
 - **AC-M3-4:** Outputs are renderable as webpages in a click-next flow (M8).
-- **AC-M3-5:** Generation/processing failures are surfaced with status consistent with M0 job semantics.
+- **AC-M3-5:** Not implemented (MVP exception). Generation is synchronous; failures fall back to deterministic templates. Closing it requires M0 job enqueueing plus worker result/failure handling.
 
 ## Dependencies & constraints
 - Quality/grounding depends on M1 extraction and M2 retrieval; compute/LLM availability per M0/worker constraints.

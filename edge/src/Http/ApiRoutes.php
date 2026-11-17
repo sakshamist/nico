@@ -12,6 +12,7 @@ use Nico\Edge\Generation\LessonService;
 use Nico\Edge\Generation\QuizService;
 use Nico\Edge\Generation\ReportService;
 use Nico\Edge\Knowledge\KnowledgeRepository;
+use Nico\Edge\Knowledge\HybridSearchService;
 use Nico\Edge\People\ProfileRepository;
 use Nico\Edge\Progress\ProgressRepository;
 use Nico\Edge\Projects\MembershipRepository;
@@ -543,6 +544,14 @@ final class ApiRoutes
             $repo = new KnowledgeRepository();
             $query = (string) ($body['query'] ?? '');
 
+            $sourceIds = null;
+            if (array_key_exists('source_ids', $body)) {
+                if (!is_array($body['source_ids'])) {
+                    throw new \InvalidArgumentException('source_ids must be an array.');
+                }
+                $sourceIds = array_values(array_map('intval', $body['source_ids']));
+            }
+
             $results = $repo->search(
                 $query,
                 (int) $user['id'],
@@ -554,12 +563,16 @@ final class ApiRoutes
                     ? (int) $body['source_id']
                     : null,
                 (int) ($body['limit'] ?? 5),
+                $sourceIds,
             );
+
+            $ranked = (new HybridSearchService())->rank($results, $query);
 
             Response::json([
                 'query'        => $query,
                 'query_terms'  => KnowledgeRepository::queryTerms($query),
-                'results'      => $results,
+                'mode'         => $ranked['mode'],
+                'results'      => $ranked['results'],
             ]);
         }));
 

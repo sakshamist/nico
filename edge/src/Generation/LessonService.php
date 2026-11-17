@@ -20,6 +20,7 @@ final class LessonService
         private readonly KnowledgeRepository $knowledge = new KnowledgeRepository(),
         private readonly ArtifactRepository $artifacts = new ArtifactRepository(),
         private readonly MembershipRepository $memberships = new MembershipRepository(),
+        private readonly ?AiContentService $ai = null,
     ) {
     }
 
@@ -73,28 +74,42 @@ final class LessonService
         ?int $resourceId,
         int $userId,
     ): int {
+        $ai = $this->ai ?? new AiContentService();
+        $aiSteps = $ai->steps($chunks);
         $steps = [];
         $allKeywords = [];
         $sourceIds = [];
 
-        foreach (array_slice($chunks, 0, 6) as $chunk) {
-            $text = trim((string) $chunk['text']);
-            $keywords = KnowledgeRepository::keywords($text, 5);
-            $allKeywords = array_unique(array_merge($allKeywords, $keywords));
-            $sourceIds[] = (int) $chunk['source_id'];
+        if ($aiSteps !== null) {
+            $steps = $aiSteps;
+            foreach ($steps as $step) {
+                $allKeywords = array_merge($allKeywords, $step['key_points'] ?? []);
+                foreach ($step['source_refs'] ?? [] as $ref) {
+                    $sourceIds[] = (int) ($ref['source_id'] ?? 0);
+                }
+            }
+            $allKeywords = array_values(array_unique($allKeywords));
+        } else {
+            foreach (array_slice($chunks, 0, 6) as $chunk) {
+                $text = trim((string) $chunk['text']);
+                $keywords = KnowledgeRepository::keywords($text, 5);
+                $allKeywords = array_unique(array_merge($allKeywords, $keywords));
+                $sourceIds[] = (int) $chunk['source_id'];
 
-            $steps[] = [
-                'title'       => 'Step ' . (count($steps) + 1) . ' — ' . $chunk['source_title'],
-                'body'        => self::limit($text, 1200),
-                'key_points'  => $keywords,
-                'source_refs' => [[
-                    'kind'         => 'source',
-                    'source_id'    => (int) $chunk['source_id'],
-                    'chunk_id'     => (int) $chunk['id'],
-                    'source_title' => (string) $chunk['source_title'],
-                    'ordinal'      => (int) $chunk['ordinal'],
-                ]],
-            ];
+                $steps[] = [
+                    'title'       => 'Step ' . (count($steps) + 1) . ' — ' . $chunk['source_title'],
+                    'body'        => self::limit($text, 1200),
+                    'key_points'  => $keywords,
+                    'source_refs' => [[
+                        'kind'         => 'source',
+                        'source_id'    => (int) $chunk['source_id'],
+                        'chunk_id'     => (int) $chunk['id'],
+                        'source_title' => (string) $chunk['source_title'],
+                        'ordinal'      => (int) $chunk['ordinal'],
+                        'page'         => $chunk['page'] ?? null,
+                    ]],
+                ];
+            }
         }
 
         $first = trim((string) $chunks[0]['text']);
@@ -110,7 +125,7 @@ final class LessonService
             'key_points'   => array_slice(array_values($allKeywords), 0, 8),
             'steps'        => $steps,
             'generated_at' => gmdate('c'),
-            'generator'    => 'nico-template-v1',
+            'generator'    => $ai->available() ? $ai->label() : 'nico-template-v1',
         ];
 
         return $this->artifacts->create([

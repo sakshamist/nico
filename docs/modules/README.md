@@ -15,27 +15,29 @@ All modules run on **M0 Platform**. All outputs are **webpages** delivered in a 
 | # | Module | Charter | Purpose | Depends on | Status |
 |---|--------|---------|---------|------------|--------|
 | M0 | [Platform](M0-platform.md) | foundation & shared contracts | Auth, DB/migrations, storage, jobs/worker contract, core entities & permissions | — | **Phase 1 implemented** (30/30 + 47/47 local) |
-| M1 | [Injector / Ingestion](M1-injector-ingestion.md) | unified intake | Upload/link/brief → validate, store, extract (parse/OCR/ASR/fetch) to canonical content | M0 | not started (reframes S2,S4) |
-| M2 | [Knowledge](M2-knowledge.md) | retrieval/grounding | Chunk, embed/index, retrieve context over ingested content | M0, M1 | **Implemented for authored sources** (M1 pending); lexical retrieval, chunks + provenance |
-| M3 | [Quizzes & Assessments](M3-quizzes-assessments.md) | leg | Quizzes, checks, rubrics, feedback grounded in sources | M0–M2 | **Implemented**: grounded MCQs, click-next attempts, server-side scoring |
-| M4 | [Lessons / Notes](M4-lessons-notes.md) | leg | Lessons, summaries, structured notes/paths | M0–M2 | **Implemented**: lesson steps, key points, progress, source refs |
+| M1 | [Injector / Ingestion](M1-injector-ingestion.md) | unified intake | Upload/link/brief → validate, store, extract (parse/OCR/ASR/fetch) to canonical content | M0 | **Minimal PDF slice implemented**: validated upload, local storage, browser extraction + optional server re-check, chunks, authenticated download. Full injector not started. |
+| M2 | [Knowledge](M2-knowledge.md) | retrieval/grounding | Chunk, embed/index, retrieve context over ingested content | M0, M1 | **Implemented**: page-aware chunks, scoped retrieval, Ollama embeddings + hybrid ranking, `source_ids` filter. Re-index and async index jobs are exceptions. |
+| M3 | [Quizzes & Assessments](M3-quizzes-assessments.md) | leg | Quizzes, checks, rubrics, feedback grounded in sources | M0–M2 | **Implemented**: grounded MCQs, template + Ollama generation, click-next attempts, server-side scoring. Sync generation is an exception. |
+| M4 | [Lessons / Notes](M4-lessons-notes.md) | leg | Lessons, summaries, structured notes/paths | M0–M2 | **Implemented**: ordered steps, key points, progress, source refs, template + Ollama generation |
 | M5 | [Live Projects](M5-live-projects.md) | leg | Ongoing project workspaces, tasks/milestones, people & capability-based auto-assignment | M0, M1, M2 | **Implemented**: project/task UI + lifecycle, invites, profiles, best-fit/manual assignment, status, milestones, dependencies, artifact links |
 | M6 | [Hackathons & Events](M6-hackathons-events.md) | leg (in workspace) | Hackathons (team) and Events/seminars (speakers) inside project workspaces, with countdown/timeline/resources | M0, M5, M1 | **Implemented**: events + hackathons, countdown/agenda/resources, RSVP/waitlist, teams/submissions, notes/Q&A artifacts, manager editing |
 | M7 | [Thesis / Report Composer](M7-thesis-report.md) | capstone | Auto-generate per-project report from work/artifacts with source references | M0–M6 | **Implemented**: versioned report artifact with citations to tasks/artifacts/sources/activities |
 | M8 | [Delivery](M8-delivery.md) | experience | Web/PWA surfaces, navigation/progress, publishing, click-next learning flow | M0 + producers | **Implemented**: `/app` web workspace, renderer, click-next, CSRF-protected forms |
 
-## Current implementation notes (M2–M8, M1 excluded)
+## Current implementation notes (M1–M8, current scope)
 
 - **Entry point:** server-rendered workspace at `/app`; JSON API remains under `/projects`, `/knowledge/*`, `/artifacts/*`, `/attempts/*` and HMAC worker paths under `/worker/*`.
-- **M1 excluded:** M2 currently accepts authored text sources (`note` / `brief` / `transcript`). Each source creates a `resources` row (`source_type='text'`, `status='done'`) so artifacts can attach via `resource_id` and reuse M0 authorization.
-- **Generation:** M3/M4/M7 use deterministic, edge-side template generation (`generator: nico-template-v1`) and write `status='ready'` artifacts synchronously. The artifact envelope is unchanged, so moving generation to the worker later does not change renderers.
-- **M2 retrieval:** lexical keyword ranking over locally stored chunks with source/chunk provenance; vector embeddings remain the planned upgrade.
+- **M1 minimal slice:** M2 accepts authored text sources (`note` / `brief` / `transcript`) and uploaded PDFs (`document`). PDF text is extracted in the browser with vendored pdf.js; if `pdftotext` is available on the edge, its text is authoritative. Both paths create a `resources` row (`source_type='text'` or `'pdf'`, `status='done'`) so artifacts can attach via `resource_id` and reuse M0 authorization.
+- **PDF storage:** originals are saved outside the webroot under `STORAGE_PATH` with MIME, bytes, sha256, original name, and a raw `files` row. Owners/project members can download through `/app/sources/{id}/download`. OCR, media, links, queue/job processing, and cPanel remote storage remain out of scope.
+- **Generation:** M3/M4 use strict-JSON Ollama generation (`qwen141:latest`) when enabled, with deterministic `nico-template-v1` fallback. M7 remains deterministic assembly. Artifacts are written synchronously with `status='ready'`; the envelope is unchanged, so moving generation to the worker later does not change renderers.
+- **M2 retrieval:** chunks carry page metadata; lexical ranking runs always, and Ollama `nomic-embed-text:latest` embeddings add cosine scores when enabled. Search results and the library page report `mode: hybrid|lexical`. `source_ids` filtering checks every requested source with `canViewSource()`.
+- **M2 exceptions:** no re-index flow (AC-M2-4) and no async indexing jobs (AC-M2-5). Re-indexing becomes mandatory the moment source text editing is introduced.
 - **M3/M4 learning:** MASTERY attempts are private to the learner; quiz correctness is decided server-side. Lesson/quiz positions persist in `learning_progress` / `assessment_attempts`.
 - **M5:** capability profile editing (`/app/profile`), project invites, task creation with milestones/dependencies/due dates, best-fit/manual assignment, release, status updates, and artifact-linked task context are available in the web workspace; assignment history remains on the JSON API.
 - **M6:** activities are hosted per project; event RSVP enforces capacity with a waitlist; hackathons add teams, enforced team sizes, and submissions; both support agenda/timeline/resources and event notes/Q&A that are captured as versioned M6 artifacts.
 - **M7:** reports cite current artifacts, knowledge sources, and activities, and cite task progress; regeneration creates a new artifact version.
-- **Schema:** `edge/migrations/003_modules.php` adds knowledge, progress/attempt, and M6 tables; `004_task_artifact_link.php` links tasks to current project artifacts; `005_task_milestone_dependency.php` adds milestone/dependency planning fields. All are guarded and safe to re-run.
-- **Verification:** `./dev.sh test` runs Sprint 1 (30), M0 (47), and modules (56); `./dev.sh test:modules` runs the M2–M8 workflow smoke test.
+- **Schema:** `edge/migrations/003_modules.php` adds knowledge, progress/attempt, and M6 tables; `004_task_artifact_link.php` links tasks to current project artifacts; `005_task_milestone_dependency.php` adds milestone/dependency planning fields; `006_pdf_ingestion.php` adds the `document` source kind and `files.original_name`; `007_m2_embedding_metadata.php` adds chunk pages and embedding metadata. All are guarded and safe to re-run.
+- **Verification:** `./dev.sh test` runs Sprint 1 (30), M0 (47), and modules (74); `./dev.sh test:modules` runs the M1–M8 workflow smoke test with Ollama disabled.
 
 ## Locked decisions
 

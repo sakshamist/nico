@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Nico\Edge\Knowledge;
 
 use Nico\Edge\Projects\MembershipRepository;
+use Nico\Edge\Support\Config;
 use Nico\Edge\Support\Database;
 use PDO;
 use Throwable;
@@ -19,7 +20,7 @@ use Throwable;
  */
 final class KnowledgeRepository
 {
-    public const KINDS = ['note', 'brief', 'transcript'];
+    public const KINDS = ['note', 'brief', 'transcript', 'document'];
 
     private const STOPWORDS = [
         'the', 'and', 'for', 'that', 'with', 'this', 'from', 'are', 'was', 'were',
@@ -31,14 +32,21 @@ final class KnowledgeRepository
     ];
 
     private PDO $pdo;
+    private ?EmbeddingIndexer $indexer;
 
-    public function __construct(?PDO $pdo = null)
+    public function __construct(?PDO $pdo = null, ?EmbeddingIndexer $indexer = null)
     {
         $this->pdo = $pdo ?? Database::pdo();
+
+        if ($indexer === null && Config::bool('OLLAMA_ENABLED', false)) {
+            $indexer = new EmbeddingIndexer($this->pdo);
+        }
+
+        $this->indexer = $indexer;
     }
 
     /**
-     * Stores an authored knowledge source plus its resource row and chunks.
+     * Stores an authored text source plus its resource row and chunks.
      *
      * @return array{source_id:int,resource_id:int,chunks:int}
      */
@@ -50,6 +58,82 @@ final class KnowledgeRepository
         string $kind = 'note',
         ?int $projectId = null,
     ): array {
+        return $this->insertSource($userId, $role, $title, $body, $kind, $projectId, 'text', null, null);
+    }
+
+    /**
+     * Stores a PDF-backed source and its raw file row in one transaction.
+     *
+     * @param array{original_name:string,path:string,mime:string,bytes:int,sha256:string} $file
+     * @param list<array{page:int,text:string}>|null $segments
+     * @return array{source_id:int,resource_id:int,chunks:int}
+     */
+    public function createIngestedSource(
+        int $userId,
+        string $role,
+        string $title,
+        string $body,
+        ?int $projectId,
+        array $file,
+        ?array $segments = null,
+    ): array {
+        return $this->insertSource($userId, $role, $title, $body, 'document', $projectId, 'pdf', $file, $segments);
+    }
+
+    /** @return list<array<string,mixed>> */
+    public function filesForResource(int $resourceId): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT id, resource_id, kind, path, mime, bytes, sha256, original_name, created_at
+               FROM files WHERE resource_id = :resource ORDER BY id DESC'
+        );
+        $stmt->execute(['resource' => $resourceId]);
+
+        return array_map(self::hydrateFile(...), $stmt->fetchAll());
+    }
+
+    /** @return array<string,mixed>|null */
+    public function rawFileForResource(int $resourceId): ?array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT id, resource_id, kind, path, mime, bytes, sha256, original_name, created_at
+               FROM files
+              WHERE resource_id = :resource AND kind = \'raw\'
+              ORDER BY id DESC LIMIT 1'
+        );
+        $stmt->execute(['resource' => $resourceId]);
+        $row = $stmt->fetch();
+
+        return $row === false ? null : self::hydrateFile($row);
+    }
+
+    /**
+     * @param array{original_name:string,path:string,mime:string,bytes:int,sha256:string}|null $file
+     * @param list<array{page:int,text:string}>|null $segments
+     * @return array{source_id:int,resource_id:int,chunks:int}
+     */
+    private function insertSource(
+        int $userId,
+        string $role,
+        string $title,
+        string $body,
+        string $kind,
+        ?int $projectId,
+        string $resourceType,
+        ?array $file,
+        ?array $segments,
+    ): array {
+        if ($segments !== null) {
+            $parts = [];
+            foreach ($segments as $segment) {
+                $text = trim((string) ($segment['text'] ?? ''));
+                if ($text !== '') {
+                    $parts[] = $text;
+                }
+            }
+            $body = implode("\n\n", $parts);
+        }
+
         $title = trim($title);
         $body = trim($body);
 
@@ -81,10 +165,27 @@ final class KnowledgeRepository
         try {
             $this->pdo->prepare(
                 'INSERT INTO resources (user_id, title, source_type, status, created_at)
-                 VALUES (:user, :title, \'text\', \'done\', :now)'
-            )->execute(['user' => $userId, 'title' => $title, 'now' => $now]);
+                 VALUES (:user, :title, :type, \'done\', :now)'
+            )->execute(['user' => $userId, 'title' => $title, 'type' => $resourceType, 'now' => $now]);
 
             $resourceId = (int) $this->pdo->lastInsertId();
+
+            if ($file !== null) {
+                $this->pdo->prepare(
+                    'INSERT INTO files
+                        (resource_id, kind, path, mime, bytes, sha256, original_name, created_at)
+                     VALUES
+                        (:resource, \'raw\', :path, :mime, :bytes, :sha, :name, :now)'
+                )->execute([
+                    'resource' => $resourceId,
+                    'path'     => $file['path'],
+                    'mime'     => $file['mime'],
+                    'bytes'    => $file['bytes'],
+                    'sha'      => $file['sha256'],
+                    'name'     => $file['original_name'],
+                    'now'      => $now,
+                ]);
+            }
 
             $this->pdo->prepare(
                 'INSERT INTO knowledge_sources
@@ -103,30 +204,59 @@ final class KnowledgeRepository
             ]);
 
             $sourceId = (int) $this->pdo->lastInsertId();
-            $chunks = self::chunk($body);
-
             $insert = $this->pdo->prepare(
                 'INSERT INTO knowledge_chunks
-                    (source_id, ordinal, text, token_count, content_hash, created_at)
-                 VALUES (:source, :ordinal, :text, :tokens, :hash, :now)'
+                    (source_id, ordinal, page, text, token_count, content_hash, created_at)
+                 VALUES (:source, :ordinal, :page, :text, :tokens, :hash, :now)'
             );
 
-            foreach ($chunks as $ordinal => $text) {
-                $insert->execute([
-                    'source'  => $sourceId,
-                    'ordinal' => $ordinal,
-                    'text'    => $text,
-                    'tokens'  => str_word_count($text),
-                    'hash'    => hash('sha256', $text),
-                    'now'     => $now,
-                ]);
+            $chunkRows = [];
+            $ordinal = 0;
+            $pageSegments = $segments ?? [['page' => null, 'text' => $body]];
+
+            foreach ($pageSegments as $segment) {
+                $page = $segment['page'] ?? null;
+                $page = $page === null ? null : (int) $page;
+
+                foreach (self::chunk((string) ($segment['text'] ?? '')) as $piece) {
+                    $insert->execute([
+                        'source'  => $sourceId,
+                        'ordinal' => $ordinal,
+                        'page'    => $page,
+                        'text'    => $piece,
+                        'tokens'  => str_word_count($piece),
+                        'hash'    => hash('sha256', $piece),
+                        'now'     => $now,
+                    ]);
+
+                    $chunkRows[] = [
+                        'id'          => (int) $this->pdo->lastInsertId(),
+                        'source_id'   => $sourceId,
+                        'resource_id' => $resourceId,
+                        'ordinal'     => $ordinal,
+                        'page'        => $page,
+                        'text'        => $piece,
+                    ];
+                    $ordinal++;
+                }
             }
 
             if ($ownTransaction) {
                 $this->pdo->commit();
             }
 
-            return ['source_id' => $sourceId, 'resource_id' => $resourceId, 'chunks' => count($chunks)];
+            if ($this->indexer !== null && $chunkRows !== []) {
+                try {
+                    $this->indexer->index($sourceId, $resourceId, $chunkRows);
+                } catch (Throwable $e) {
+                    \Nico\Edge\Support\Log::error('embedding.index_failed', [
+                        'source_id' => $sourceId,
+                        'message'   => $e->getMessage(),
+                    ]);
+                }
+            }
+
+            return ['source_id' => $sourceId, 'resource_id' => $resourceId, 'chunks' => count($chunkRows)];
         } catch (Throwable $e) {
             if ($ownTransaction && $this->pdo->inTransaction()) {
                 $this->pdo->rollBack();
@@ -207,7 +337,7 @@ final class KnowledgeRepository
     public function chunks(int $sourceId): array
     {
         $stmt = $this->pdo->prepare(
-            'SELECT id, source_id, ordinal, text, token_count, content_hash
+            'SELECT id, source_id, ordinal, page, text, token_count, content_hash
                FROM knowledge_chunks WHERE source_id = :source ORDER BY ordinal ASC'
         );
         $stmt->execute(['source' => $sourceId]);
@@ -216,6 +346,7 @@ final class KnowledgeRepository
             $row['id'] = (int) $row['id'];
             $row['source_id'] = (int) $row['source_id'];
             $row['ordinal'] = (int) $row['ordinal'];
+            $row['page'] = $row['page'] === null ? null : (int) $row['page'];
             $row['token_count'] = (int) $row['token_count'];
 
             return $row;
@@ -225,6 +356,7 @@ final class KnowledgeRepository
     /**
      * Retrieves ranked chunks for a query within an authorized scope.
      *
+     * @param list<int>|null $sourceIds
      * @return list<array<string,mixed>>
      */
     public function search(
@@ -234,6 +366,7 @@ final class KnowledgeRepository
         ?int $projectId = null,
         ?int $sourceId = null,
         int $limit = 5,
+        ?array $sourceIds = null,
     ): array {
         if ($sourceId !== null && !$this->canViewSource($sourceId, $userId, $role)) {
             throw new \InvalidArgumentException('You cannot read that source.');
@@ -245,7 +378,25 @@ final class KnowledgeRepository
             }
         }
 
-        $sql = 'SELECT c.id, c.source_id, c.ordinal, c.text, c.token_count,
+        $authorizedSourceIds = [];
+        if ($sourceIds !== null) {
+            foreach ($sourceIds as $candidate) {
+                $candidate = (int) $candidate;
+                if ($candidate <= 0 || isset($authorizedSourceIds[$candidate])) {
+                    continue;
+                }
+                if (!$this->canViewSource($candidate, $userId, $role)) {
+                    throw new \InvalidArgumentException('You cannot read one of those sources.');
+                }
+                $authorizedSourceIds[$candidate] = $candidate;
+            }
+
+            if ($authorizedSourceIds === []) {
+                return [];
+            }
+        }
+
+        $sql = 'SELECT c.id, c.source_id, c.ordinal, c.page, c.text, c.token_count,
                        s.title AS source_title, s.resource_id, s.project_id
                   FROM knowledge_chunks c
                   JOIN knowledge_sources s ON s.id = c.source_id
@@ -269,6 +420,16 @@ final class KnowledgeRepository
         if ($sourceId !== null) {
             $sql .= ' AND s.id = :source';
             $params['source'] = $sourceId;
+        }
+
+        if ($authorizedSourceIds !== []) {
+            $placeholders = [];
+            foreach (array_values($authorizedSourceIds) as $index => $id) {
+                $name = 'list' . $index;
+                $placeholders[] = ':' . $name;
+                $params[$name] = $id;
+            }
+            $sql .= ' AND s.id IN (' . implode(', ', $placeholders) . ')';
         }
 
         $sql .= ' ORDER BY c.id DESC LIMIT 500';
@@ -301,6 +462,7 @@ final class KnowledgeRepository
             $row['id'] = (int) $row['id'];
             $row['source_id'] = (int) $row['source_id'];
             $row['ordinal'] = (int) $row['ordinal'];
+            $row['page'] = $row['page'] === null ? null : (int) $row['page'];
             $row['token_count'] = (int) $row['token_count'];
             $row['resource_id'] = (int) $row['resource_id'];
             $row['project_id'] = $row['project_id'] === null ? null : (int) $row['project_id'];
@@ -334,7 +496,7 @@ final class KnowledgeRepository
     public function chunksForProject(int $projectId): array
     {
         $stmt = $this->pdo->prepare(
-            'SELECT c.id, c.source_id, c.ordinal, c.text, s.title AS source_title,
+            'SELECT c.id, c.source_id, c.ordinal, c.page, c.text, s.title AS source_title,
                     s.resource_id, s.project_id
                FROM knowledge_chunks c
                JOIN knowledge_sources s ON s.id = c.source_id
@@ -350,7 +512,7 @@ final class KnowledgeRepository
     public function chunksForSource(int $sourceId): array
     {
         $stmt = $this->pdo->prepare(
-            'SELECT c.id, c.source_id, c.ordinal, c.text, s.title AS source_title,
+            'SELECT c.id, c.source_id, c.ordinal, c.page, c.text, s.title AS source_title,
                     s.resource_id, s.project_id
                FROM knowledge_chunks c
                JOIN knowledge_sources s ON s.id = c.source_id
@@ -372,6 +534,7 @@ final class KnowledgeRepository
             $row['id'] = (int) $row['id'];
             $row['source_id'] = (int) $row['source_id'];
             $row['ordinal'] = (int) $row['ordinal'];
+            $row['page'] = $row['page'] === null ? null : (int) $row['page'];
             $row['resource_id'] = (int) $row['resource_id'];
             $row['project_id'] = $row['project_id'] === null ? null : (int) $row['project_id'];
 
@@ -492,6 +655,16 @@ final class KnowledgeRepository
         $row['user_id'] = (int) $row['user_id'];
         $row['resource_id'] = (int) $row['resource_id'];
         $row['project_id'] = $row['project_id'] === null ? null : (int) $row['project_id'];
+
+        return $row;
+    }
+
+    /** @param array<string,mixed> $row */
+    private static function hydrateFile(array $row): array
+    {
+        $row['id'] = (int) $row['id'];
+        $row['resource_id'] = (int) $row['resource_id'];
+        $row['bytes'] = (int) $row['bytes'];
 
         return $row;
     }

@@ -2,12 +2,13 @@
 /** @var list<array<string,mixed>> $sources */
 /** @var string $query */
 /** @var list<array<string,mixed>> $results */
+/** @var string $mode */
 ?>
 <section class="page-head">
     <div>
         <p class="eyebrow">M2 knowledge</p>
         <h1>Knowledge library</h1>
-        <p class="muted">Authored notes and briefs, chunked for grounded retrieval and generation.</p>
+        <p class="muted">Notes, briefs, and uploaded PDFs, chunked for grounded retrieval and generation.</p>
     </div>
     <div class="head-actions">
         <a class="button primary" href="/app/library/new">Add source</a>
@@ -25,7 +26,7 @@
     <section class="panel">
         <div class="panel-head">
             <h2>Search results</h2>
-            <span class="muted"><?= count($results) ?> match(es) for “<?= e($query) ?>”</span>
+            <span class="muted"><?= count($results) ?> match(es) for “<?= e($query) ?>” · <?= e($mode ?? 'lexical') ?> search</span>
         </div>
         <?php if ($results === []): ?>
             <p class="empty">No chunks matched those terms.</p>

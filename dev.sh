@@ -19,10 +19,10 @@ case "${1:-help}" in
   db:logs)  docker logs --tail 50 "$CONTAINER" ;;
   migrate)  php "$ROOT/edge/bin/migrate.php" "${2:-migrate}" ;;
   serve)
-    (cd "$ROOT/edge" && php -S 127.0.0.1:8080 -t public >/tmp/nico_server.log 2>&1 &)
-    echo "edge on http://127.0.0.1:8080  (health: /health)"
+    (cd "$ROOT/edge" && nohup php -d upload_max_filesize=20M -d post_max_size=25M -d memory_limit=256M -S 127.0.0.1:8080 -t public >/tmp/nico_server.log 2>&1 &) >/dev/null 2>&1
+    echo "edge on http://127.0.0.1:8080  (health: /health; 20M uploads)"
     ;;
-  stop)     pkill -f "php -S 127.0.0.1:8080" 2>/dev/null; echo "server stopped" ;;
+  stop)     pkill -f "php.*-S 127.0.0.1:8080" 2>/dev/null; echo "server stopped" ;;
   test)     php "$ROOT/edge/tests/verify_sprint1.php" && php "$ROOT/edge/tests/verify_m0.php" && php "$ROOT/edge/tests/verify_modules.php" ;;
   test:m0)  php "$ROOT/edge/tests/verify_m0.php" ;;
   test:modules) php "$ROOT/edge/tests/verify_modules.php" ;;

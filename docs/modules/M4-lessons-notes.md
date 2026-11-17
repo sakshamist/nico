@@ -1,7 +1,7 @@
 # M4 — Lessons / Notes (leg)
 
-**Status:** implemented: structured lesson generation from chunks, per-user step progress, source references.  
-**Depends on:** M0, M1, M2.  
+**Status:** implemented: structured lesson generation from chunks (template + Ollama), per-user step progress, source references; synchronous generation is an MVP exception.
+**Depends on:** M0, M1, M2.
 **Enables:** M7, M8.
 
 ## Purpose
@@ -32,7 +32,7 @@ Turn ingested knowledge into structured learning material — lessons, summaries
 - **AC-M4-2:** Content is structured/ordered for stepwise (click-next) consumption.
 - **AC-M4-3:** Outputs are traceable to source resources/sections where available.
 - **AC-M4-4:** Outputs render as webpages in the click-next learning flow (M8).
-- **AC-M4-5:** Generation/processing failures are surfaced with status consistent with M0 job semantics.
+- **AC-M4-5:** Not implemented (MVP exception). Generation is synchronous with deterministic fallback; M0 job status/failure handling would be needed to close it.
 
 ## Dependencies & constraints
 - Depends on M1 extraction and M2 retrieval quality; compute/LLM availability per M0/worker constraints.

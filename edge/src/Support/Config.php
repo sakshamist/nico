@@ -25,14 +25,14 @@ final class Config
      */
     public static function get(string $key, mixed $default = null): mixed
     {
-        $fromFile = self::$values[$key] ?? null;
-        if ($fromFile !== null) {
-            return $fromFile;
+        $fromEnv = getenv($key);
+        if ($fromEnv !== false && $fromEnv !== '') {
+            return $fromEnv;
         }
 
-        $fromEnv = getenv($key);
-        if ($fromEnv !== false) {
-            return $fromEnv;
+        $fromFile = self::$values[$key] ?? null;
+        if ($fromFile !== null && $fromFile !== '') {
+            return $fromFile;
         }
 
         if ($default === null) {

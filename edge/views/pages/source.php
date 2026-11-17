@@ -2,6 +2,14 @@
 /** @var array<string,mixed> $source */
 /** @var list<array<string,mixed>> $chunks */
 /** @var list<array<string,mixed>> $artifacts */
+/** @var list<array<string,mixed>> $files */
+$pdfFile = null;
+foreach ($files ?? [] as $file) {
+    if (($file['kind'] ?? '') === 'raw') {
+        $pdfFile = $file;
+        break;
+    }
+}
 ?>
 <section class="page-head">
     <div>
@@ -15,6 +23,9 @@
         </div>
     </div>
     <div class="head-actions">
+        <?php if ($pdfFile !== null): ?>
+            <a class="button" href="/app/sources/<?= (int) $source['id'] ?>/download">Download PDF</a>
+        <?php endif; ?>
         <form method="post" action="/app/sources/<?= (int) $source['id'] ?>/generate" class="inline">
             <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
             <input type="hidden" name="type" value="lesson">
@@ -31,6 +42,12 @@
 <div class="grid two">
     <section class="panel">
         <h2>Source text</h2>
+        <?php if ($pdfFile !== null): ?>
+            <p class="muted">
+                Original PDF: <?= e($pdfFile['original_name'] ?: $source['title']) ?>
+                · <?= number_format((int) $pdfFile['bytes'] / 1024, 1) ?> KB
+            </p>
+        <?php endif; ?>
         <div class="prose"><?= nl2br(e($source['body'])) ?></div>
     </section>
 
@@ -56,7 +73,9 @@
     <ol class="chunks">
         <?php foreach ($chunks as $chunk): ?>
             <li>
-                <span class="muted">#<?= (int) $chunk['ordinal'] + 1 ?> · <?= (int) $chunk['token_count'] ?> words</span>
+                <span class="muted">#<?= (int) $chunk['ordinal'] + 1 ?>
+                    <?php if (($chunk['page'] ?? null) !== null): ?> · page <?= (int) $chunk['page'] ?><?php endif; ?>
+                    · <?= (int) $chunk['token_count'] ?> words</span>
                 <p><?= e($chunk['text']) ?></p>
             </li>
         <?php endforeach; ?>

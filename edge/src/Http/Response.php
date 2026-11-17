@@ -30,4 +30,25 @@ final class Response
     {
         header('Location: ' . $location, true, 302);
     }
+
+    /** Streams a private file as an authenticated download. */
+    public static function download(string $absolutePath, string $mime, string $filename): never
+    {
+        if (!is_file($absolutePath)) {
+            http_response_code(404);
+            exit;
+        }
+
+        $safeName = str_replace(["\r", "\n", '"', '\\'], '', $filename);
+        $safeName = $safeName === '' ? 'document.pdf' : mb_substr($safeName, 0, 255);
+        $asciiName = preg_replace('/[^\x20-\x7E]/', '_', $safeName) ?: 'document.pdf';
+
+        self::noStore();
+        header('Content-Type: ' . $mime);
+        header('Content-Disposition: attachment; filename="' . $asciiName . '"; filename*=UTF-8\'\'' . rawurlencode($safeName));
+        header('Content-Length: ' . (string) filesize($absolutePath));
+
+        readfile($absolutePath);
+        exit;
+    }
 }

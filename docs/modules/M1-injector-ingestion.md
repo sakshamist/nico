@@ -1,8 +1,17 @@
 # M1 — Injector / Ingestion
 
-**Status:** not started (reframes archived Sprints 2 & 4 ingestion).  
-**Depends on:** M0.  
+**Status:** minimal PDF slice implemented; full injector not started (reframes archived Sprints 2 & 4 ingestion).
+**Depends on:** M0.
 **Enables:** M2, M3, M4, M5 (context), M6 (briefs/materials).
+
+## Current minimal implementation
+
+- PDF-only upload at `/app/library/pdf` from the add-source page. File type, size, PHP upload ceiling, and extracted text are validated server-side.
+- Browser-side extraction uses vendored pdf.js. If `pdftotext` is available on the edge, its output is authoritative; otherwise the browser text is used. This keeps cPanel viable where shell binaries are unavailable.
+- Uploads are stored under `STORAGE_PATH` outside the webroot. `files` records MIME, bytes, sha256, original name, and a relative path.
+- One transaction creates the `resources` row (`source_type='pdf'`, `status='done'`), the raw `files` row, the `knowledge_sources` row (`kind='document'`), and `knowledge_chunks`. Failures delete the stored file and leave no partial rows.
+- Authenticated download is available at `/app/sources/{id}/download` with the same visibility rules as the source.
+- Not implemented: OCR, images/audio/video/link intake, job-driven status/progress, remote storage, and the full `extracted_content` contract.
 
 ## Purpose
 Single, unified **injector** for all learning inputs. Accept uploads, links, and briefs; validate and store them safely; extract canonical text/metadata so downstream modules work from a consistent source.

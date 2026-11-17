@@ -22,6 +22,7 @@ final class QuizService
         private readonly KnowledgeRepository $knowledge = new KnowledgeRepository(),
         private readonly ArtifactRepository $artifacts = new ArtifactRepository(),
         private readonly MembershipRepository $memberships = new MembershipRepository(),
+        private readonly ?AiContentService $ai = null,
     ) {
     }
 
@@ -75,7 +76,8 @@ final class QuizService
         ?int $resourceId,
         int $userId,
     ): int {
-        $questions = self::buildQuestions($chunks);
+        $ai = $this->ai ?? new AiContentService();
+        $questions = $ai->questions($chunks) ?? self::buildQuestions($chunks);
 
         if ($questions === []) {
             throw new \InvalidArgumentException('The sources are too short to build a quiz.');
@@ -86,7 +88,7 @@ final class QuizService
             'instructions' => 'Choose the best answer for each question. Feedback appears at the end.',
             'questions'    => $questions,
             'generated_at' => gmdate('c'),
-            'generator'    => 'nico-template-v1',
+            'generator'    => $ai->available() ? $ai->label() : 'nico-template-v1',
         ];
 
         $sourceIds = array_values(array_unique(array_map(
@@ -214,6 +216,7 @@ final class QuizService
                         'chunk_id'     => (int) $chunk['id'],
                         'source_title' => (string) $chunk['source_title'],
                         'ordinal'      => (int) $chunk['ordinal'],
+                        'page'         => $chunk['page'] ?? null,
                     ]],
                     'feedback'     => 'Review the cited passage for the full context.',
                 ];
