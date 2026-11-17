@@ -52,7 +52,7 @@ See [`docs/modules/README.md`](docs/modules/README.md) for dependencies, locked 
 - **M0 Platform — Phase 1 built and locally verified** (30/30 + 47/47 acceptance checks), including projects/membership, capability profiles, tasks/best-fit assignment, versioned artifacts, durable queue, and HMAC worker API.
 - **M1 Injector / Ingestion — not started.**
 - **M2–M8 — implemented for the current scope** (authored knowledge sources instead of ingestion, deterministic edge-side generation, lexical retrieval). Web workspace is served at `/app`.
-- Module workflow checks: 54/54 (`./dev.sh test:modules`).
+- Module workflow checks: 56/56 (`./dev.sh test:modules`).
 
 Known items carried forward: ingestion/worker generation still needs compute preflight (disk/RAM/binaries); cPanel host DB version and upload ceiling must be verified/raised for media. Historical sprint status: [`docs/archive/sprints-2026/STATUS.md`](docs/archive/sprints-2026/STATUS.md).
 

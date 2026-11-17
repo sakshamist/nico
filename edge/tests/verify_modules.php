@@ -18,6 +18,7 @@ require __DIR__ . '/../autoload.php';
 
 use Nico\Edge\Activities\ActivityRepository;
 use Nico\Edge\Knowledge\KnowledgeRepository;
+use Nico\Edge\Projects\ProjectRepository;
 use Nico\Edge\Support\Config;
 use Nico\Edge\Support\Database;
 use Nico\Edge\Support\Migrator;
@@ -497,6 +498,23 @@ check('M5', 'web manual assignment overrides best fit',
         && (int) ($manualTaskAfter['body']['assignee_id'] ?? 0) === $bob['id']);
 check('M5', 'assignee or manager can update task status',
     $statusUpdate['status'] === 302 && ($manualTaskAfter2['body']['status'] ?? '') === 'in_progress');
+
+$projectStatus = httpForm('POST', $base . "/app/projects/{$projectId}/status", [
+    '_csrf'  => $csrfMatch[1] ?? '',
+    'status' => 'completed',
+], $alice['jar']);
+check('M5', 'manager can update project status', $projectStatus['status'] === 302
+    && (new ProjectRepository($pdo))->find($projectId)['status'] === 'completed');
+(new ProjectRepository($pdo))->updateStatus($projectId, 'active');
+
+$activityEdit = httpForm('POST', $base . "/app/activities/{$eventId}/edit", [
+    '_csrf'     => $csrfMatch[1] ?? '',
+    'title'     => 'Safety seminar — updated',
+    'starts_at' => gmdate('Y-m-d\TH:i', time() + 90000),
+    'ends_at'   => gmdate('Y-m-d\TH:i', time() + 93600),
+], $alice['jar']);
+check('M6', 'manager can edit activity details', $activityEdit['status'] === 302
+    && ($activities->find($eventId)['title'] ?? '') === 'Safety seminar — updated');
 
 $searchPage = http('GET', $base . '/app/library?q=' . rawurlencode('emergency stop'), [], $alice['jar']);
 check('M8', 'library search page renders grounded results', $searchPage['status'] === 200

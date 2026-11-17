@@ -1,6 +1,6 @@
 # M5 — Live Projects (leg)
 
-**Status:** implemented: project/task web workspace, member invites, capability profiles, best-fit assign/release, manual override, task status updates, milestones/phases, dependencies, due dates, and artifact-linked task context.
+**Status:** implemented: project/task web workspace (incl. project status lifecycle), member invites, capability profiles, best-fit assign/release, manual override, task status updates, milestones/phases, dependencies, due dates, and artifact-linked task context.
 **Depends on:** M0 (workspace, users/capabilities, tasks, artifacts), M1/M2 (learning context, recommended).  
 **Enables:** M6, M7, M8.
 

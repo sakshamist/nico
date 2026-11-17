@@ -1,6 +1,6 @@
 # M6 — Hackathons & Events (leg, native to workspace)
 
-**Status:** implemented: project-hosted hackathons/events, countdown, agenda/timeline/resources, RSVP + waitlist, enforced team sizes, submissions, event notes/Q&A captured as versioned artifacts, and manager status updates.
+**Status:** implemented: project-hosted hackathons/events, countdown, agenda/timeline/resources, RSVP + waitlist, enforced team sizes, submissions, event notes/Q&A captured as versioned artifacts, and manager editing (details + status lifecycle).
 **Depends on:** M0, M5 (native workspace), M1 (briefs/materials intake).  
 **Enables:** M7, M8.
 

@@ -19,8 +19,8 @@ All modules run on **M0 Platform**. All outputs are **webpages** delivered in a 
 | M2 | [Knowledge](M2-knowledge.md) | retrieval/grounding | Chunk, embed/index, retrieve context over ingested content | M0, M1 | **Implemented for authored sources** (M1 pending); lexical retrieval, chunks + provenance |
 | M3 | [Quizzes & Assessments](M3-quizzes-assessments.md) | leg | Quizzes, checks, rubrics, feedback grounded in sources | M0–M2 | **Implemented**: grounded MCQs, click-next attempts, server-side scoring |
 | M4 | [Lessons / Notes](M4-lessons-notes.md) | leg | Lessons, summaries, structured notes/paths | M0–M2 | **Implemented**: lesson steps, key points, progress, source refs |
-| M5 | [Live Projects](M5-live-projects.md) | leg | Ongoing project workspaces, tasks/milestones, people & capability-based auto-assignment | M0, M1, M2 | **Implemented**: project/task UI, invites, profiles, best-fit/manual assignment, status, milestones, dependencies, artifact links |
-| M6 | [Hackathons & Events](M6-hackathons-events.md) | leg (in workspace) | Hackathons (team) and Events/seminars (speakers) inside project workspaces, with countdown/timeline/resources | M0, M5, M1 | **Implemented**: events + hackathons, countdown/agenda/resources, RSVP/waitlist, teams/submissions, notes/Q&A artifacts |
+| M5 | [Live Projects](M5-live-projects.md) | leg | Ongoing project workspaces, tasks/milestones, people & capability-based auto-assignment | M0, M1, M2 | **Implemented**: project/task UI + lifecycle, invites, profiles, best-fit/manual assignment, status, milestones, dependencies, artifact links |
+| M6 | [Hackathons & Events](M6-hackathons-events.md) | leg (in workspace) | Hackathons (team) and Events/seminars (speakers) inside project workspaces, with countdown/timeline/resources | M0, M5, M1 | **Implemented**: events + hackathons, countdown/agenda/resources, RSVP/waitlist, teams/submissions, notes/Q&A artifacts, manager editing |
 | M7 | [Thesis / Report Composer](M7-thesis-report.md) | capstone | Auto-generate per-project report from work/artifacts with source references | M0–M6 | **Implemented**: versioned report artifact with citations to tasks/artifacts/sources/activities |
 | M8 | [Delivery](M8-delivery.md) | experience | Web/PWA surfaces, navigation/progress, publishing, click-next learning flow | M0 + producers | **Implemented**: `/app` web workspace, renderer, click-next, CSRF-protected forms |
 
@@ -35,7 +35,7 @@ All modules run on **M0 Platform**. All outputs are **webpages** delivered in a 
 - **M6:** activities are hosted per project; event RSVP enforces capacity with a waitlist; hackathons add teams, enforced team sizes, and submissions; both support agenda/timeline/resources and event notes/Q&A that are captured as versioned M6 artifacts.
 - **M7:** reports cite current artifacts, knowledge sources, and activities, and cite task progress; regeneration creates a new artifact version.
 - **Schema:** `edge/migrations/003_modules.php` adds knowledge, progress/attempt, and M6 tables; `004_task_artifact_link.php` links tasks to current project artifacts; `005_task_milestone_dependency.php` adds milestone/dependency planning fields. All are guarded and safe to re-run.
-- **Verification:** `./dev.sh test` runs Sprint 1 (30), M0 (47), and modules (54); `./dev.sh test:modules` runs the M2–M8 workflow smoke test.
+- **Verification:** `./dev.sh test` runs Sprint 1 (30), M0 (47), and modules (56); `./dev.sh test:modules` runs the M2–M8 workflow smoke test.
 
 ## Locked decisions
 

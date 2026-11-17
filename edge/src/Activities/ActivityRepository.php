@@ -36,13 +36,96 @@ final class ActivityRepository
     public function create(int $projectId, int $userId, array $data): int
     {
         $kind = (string) ($data['kind'] ?? '');
-        $title = trim((string) ($data['title'] ?? ''));
-        $status = (string) ($data['status'] ?? 'scheduled');
-        $visibility = (string) ($data['visibility'] ?? 'workspace');
 
         if (!in_array($kind, self::KINDS, true)) {
             throw new \InvalidArgumentException("Unknown activity kind: {$kind}");
         }
+
+        $fields = self::normalizeInput($data);
+        $now = gmdate('c');
+
+        $this->pdo->prepare(
+            'INSERT INTO activities
+                (project_id, kind, title, description, timezone, status, visibility,
+                 starts_at, ends_at, join_url, location, rules_url, capacity, meta,
+                 created_by, created_at, updated_at)
+             VALUES
+                (:project, :kind, :title, :description, :timezone, :status, :visibility,
+                 :starts, :ends, :join_url, :location, :rules_url, :capacity, :meta,
+                 :created_by, :now, :now_updated)'
+        )->execute([
+            'project'     => $projectId,
+            'kind'        => $kind,
+            'title'       => $fields['title'],
+            'description' => $fields['description'],
+            'timezone'    => $fields['timezone'],
+            'status'      => $fields['status'],
+            'visibility'  => $fields['visibility'],
+            'starts'      => $fields['starts_at'],
+            'ends'        => $fields['ends_at'],
+            'join_url'    => $fields['join_url'],
+            'location'    => $fields['location'],
+            'rules_url'   => $fields['rules_url'],
+            'capacity'    => $fields['capacity'],
+            'meta'        => $fields['meta'],
+            'created_by'  => $userId,
+            'now'         => $now,
+            'now_updated' => $now,
+        ]);
+
+        return (int) $this->pdo->lastInsertId();
+    }
+
+    /** @param array<string,mixed> $data */
+    public function update(int $activityId, array $data): void
+    {
+        $exists = $this->pdo->prepare('SELECT 1 FROM activities WHERE id = :id LIMIT 1');
+        $exists->execute(['id' => $activityId]);
+
+        if ($exists->fetchColumn() === false) {
+            throw new \InvalidArgumentException('Activity not found.');
+        }
+
+        $fields = self::normalizeInput($data);
+
+        $this->pdo->prepare(
+            'UPDATE activities
+               SET title = :title, description = :description, timezone = :timezone,
+                   status = :status, visibility = :visibility, starts_at = :starts,
+                   ends_at = :ends, join_url = :join_url, location = :location,
+                   rules_url = :rules_url, capacity = :capacity, meta = :meta,
+                   updated_at = :now
+             WHERE id = :id'
+        )->execute([
+            'title'       => $fields['title'],
+            'description' => $fields['description'],
+            'timezone'    => $fields['timezone'],
+            'status'      => $fields['status'],
+            'visibility'  => $fields['visibility'],
+            'starts'      => $fields['starts_at'],
+            'ends'        => $fields['ends_at'],
+            'join_url'    => $fields['join_url'],
+            'location'    => $fields['location'],
+            'rules_url'   => $fields['rules_url'],
+            'capacity'    => $fields['capacity'],
+            'meta'        => $fields['meta'],
+            'now'         => gmdate('c'),
+            'id'          => $activityId,
+        ]);
+    }
+
+    /**
+     * Validates and normalizes the shared editable activity fields; kind is
+     * validated by the callers because it is immutable after creation.
+     *
+     * @param array<string,mixed> $data
+     * @return array<string,mixed>
+     */
+    private static function normalizeInput(array $data): array
+    {
+        $title = trim((string) ($data['title'] ?? ''));
+        $status = (string) ($data['status'] ?? 'scheduled');
+        $visibility = (string) ($data['visibility'] ?? 'workspace');
 
         if ($title === '' || strlen($title) > 255) {
             throw new \InvalidArgumentException('Activity title must be 1-255 characters.');
@@ -83,27 +166,14 @@ final class ActivityRepository
             $meta['team_size_max'] = $teamSize;
         }
 
-        $now = gmdate('c');
-
-        $this->pdo->prepare(
-            'INSERT INTO activities
-                (project_id, kind, title, description, timezone, status, visibility,
-                 starts_at, ends_at, join_url, location, rules_url, capacity, meta,
-                 created_by, created_at, updated_at)
-             VALUES
-                (:project, :kind, :title, :description, :timezone, :status, :visibility,
-                 :starts, :ends, :join_url, :location, :rules_url, :capacity, :meta,
-                 :created_by, :now, :now_updated)'
-        )->execute([
-            'project'     => $projectId,
-            'kind'        => $kind,
+        return [
             'title'       => $title,
             'description' => ($data['description'] ?? '') !== '' ? (string) $data['description'] : null,
             'timezone'    => ($data['timezone'] ?? '') !== '' ? (string) $data['timezone'] : 'UTC',
             'status'      => $status,
             'visibility'  => $visibility,
-            'starts'      => $starts,
-            'ends'        => $ends,
+            'starts_at'   => $starts,
+            'ends_at'     => $ends,
             'join_url'    => ($data['join_url'] ?? '') !== '' ? (string) $data['join_url'] : null,
             'location'    => ($data['location'] ?? '') !== '' ? (string) $data['location'] : null,
             'rules_url'   => ($data['rules_url'] ?? '') !== '' ? (string) $data['rules_url'] : null,
@@ -111,12 +181,7 @@ final class ActivityRepository
             'meta'        => $meta !== null
                 ? json_encode($meta, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR)
                 : null,
-            'created_by'  => $userId,
-            'now'         => $now,
-            'now_updated' => $now,
-        ]);
-
-        return (int) $this->pdo->lastInsertId();
+        ];
     }
 
     public function updateStatus(int $activityId, string $status): void

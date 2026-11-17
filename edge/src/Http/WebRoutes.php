@@ -222,6 +222,19 @@ final class WebRoutes
             View::redirect('/app/projects/' . $id);
         }, '/app/projects'));
 
+        $app->post('/app/projects/{id}/status', self::post(static function (App $app, array $params): void {
+            $user = self::requireUser();
+            $projectId = (int) $params['id'];
+
+            if (!(new MembershipRepository())->canManage($projectId, (int) $user['id'], (string) $user['role'])) {
+                View::forbidden();
+            }
+
+            (new ProjectRepository())->updateStatus($projectId, (string) ($_POST['status'] ?? ''));
+            View::flash('success', 'Project status updated.');
+            View::redirect('/app/projects/' . $projectId);
+        }, '/app/projects'));
+
         $app->post('/app/projects/{id}/members', self::post(static function (App $app, array $params): void {
             $user = self::requireUser();
             $projectId = (int) $params['id'];
@@ -441,20 +454,6 @@ final class WebRoutes
             }
 
             $kind = (string) ($_POST['kind'] ?? 'event');
-            $meta = $kind === 'hackathon'
-                ? [
-                    'team_size_max' => (int) ($_POST['team_size_max'] ?? 4),
-                    'tracks'        => (string) ($_POST['tracks'] ?? ''),
-                    'prizes'        => (string) ($_POST['prizes'] ?? ''),
-                    'agenda'        => (string) ($_POST['agenda'] ?? ''),
-                    'resources'     => (string) ($_POST['resources'] ?? ''),
-                ]
-                : [
-                    'speaker_name' => (string) ($_POST['speaker_name'] ?? ''),
-                    'speaker_bio'  => (string) ($_POST['speaker_bio'] ?? ''),
-                    'agenda'       => (string) ($_POST['agenda'] ?? ''),
-                    'resources'    => (string) ($_POST['resources'] ?? ''),
-                ];
 
             $activityId = (new ActivityRepository())->create($projectId, (int) $user['id'], [
                 'kind'        => $kind,
@@ -469,7 +468,7 @@ final class WebRoutes
                 'rules_url'   => (string) ($_POST['rules_url'] ?? ''),
                 'capacity'    => (string) ($_POST['capacity'] ?? ''),
                 'visibility'  => (string) ($_POST['visibility'] ?? 'workspace'),
-                'meta'        => $meta,
+                'meta'        => self::activityMetaFromPost($kind),
             ]);
 
             View::flash('success', 'Activity created.');
@@ -779,6 +778,42 @@ final class WebRoutes
             View::redirect('/app/activities/' . $activity['id']);
         }, '/app'));
 
+        $app->post('/app/activities/{id}/edit', self::post(static function (App $app, array $params): void {
+            $user = self::requireUser();
+            $repo = new ActivityRepository();
+            $activity = $repo->find((int) $params['id']);
+
+            if ($activity === null) {
+                View::notFound();
+            }
+
+            if (!(new MembershipRepository())->canManage(
+                (int) $activity['project_id'],
+                (int) $user['id'],
+                (string) $user['role'],
+            )) {
+                View::forbidden();
+            }
+
+            $repo->update((int) $activity['id'], [
+                'title'       => (string) ($_POST['title'] ?? ''),
+                'description' => (string) ($_POST['description'] ?? ''),
+                'starts_at'   => (string) ($_POST['starts_at'] ?? ''),
+                'ends_at'     => (string) ($_POST['ends_at'] ?? ''),
+                'timezone'    => (string) ($_POST['timezone'] ?? 'UTC'),
+                'status'      => (string) ($_POST['status'] ?? 'scheduled'),
+                'location'    => (string) ($_POST['location'] ?? ''),
+                'join_url'    => (string) ($_POST['join_url'] ?? ''),
+                'rules_url'   => (string) ($_POST['rules_url'] ?? ''),
+                'capacity'    => (string) ($_POST['capacity'] ?? ''),
+                'visibility'  => (string) ($_POST['visibility'] ?? 'workspace'),
+                'meta'        => self::activityMetaFromPost((string) $activity['kind']),
+            ]);
+
+            View::flash('success', 'Activity updated.');
+            View::redirect('/app/activities/' . $activity['id']);
+        }, '/app'));
+
         $app->post('/app/activities/{id}/rsvp', self::post(static function (App $app, array $params): void {
             $user = self::requireUser();
             $repo = new ActivityRepository();
@@ -961,6 +996,26 @@ final class WebRoutes
         }
 
         return null;
+    }
+
+    /** Kind-specific activity details (M6) shared by the create and edit routes.
+     *  @return array<string,mixed> */
+    private static function activityMetaFromPost(string $kind): array
+    {
+        return $kind === 'hackathon'
+            ? [
+                'team_size_max' => (int) ($_POST['team_size_max'] ?? 4),
+                'tracks'        => (string) ($_POST['tracks'] ?? ''),
+                'prizes'        => (string) ($_POST['prizes'] ?? ''),
+                'agenda'        => (string) ($_POST['agenda'] ?? ''),
+                'resources'     => (string) ($_POST['resources'] ?? ''),
+            ]
+            : [
+                'speaker_name' => (string) ($_POST['speaker_name'] ?? ''),
+                'speaker_bio'  => (string) ($_POST['speaker_bio'] ?? ''),
+                'agenda'       => (string) ($_POST['agenda'] ?? ''),
+                'resources'    => (string) ($_POST['resources'] ?? ''),
+            ];
     }
 
     /** @param callable $handler */

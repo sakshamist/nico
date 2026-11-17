@@ -179,3 +179,61 @@ $rulesUrl = safe_url($activity['rules_url'] ?? null);
         <?php endif; ?>
     </section>
 </div>
+
+<?php if ($can_manage): ?>
+    <?php
+    $toLocal = static fn (?string $utc): string => $utc === null ? '' : str_replace(' ', 'T', substr($utc, 0, 16));
+    $meta = is_array($activity['meta'] ?? null) ? $activity['meta'] : [];
+    ?>
+    <section class="panel">
+        <details class="disclosure">
+            <summary>Edit activity</summary>
+            <form method="post" action="/app/activities/<?= (int) $activity['id'] ?>/edit" class="stack">
+                <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+                <label>Title <input name="title" required maxlength="255" value="<?= e($activity['title']) ?>"></label>
+                <label>Description <textarea name="description" rows="2"><?= e($activity['description'] ?? '') ?></textarea></label>
+                <div class="grid two tight">
+                    <label>Starts <input type="datetime-local" name="starts_at" value="<?= e($toLocal($activity['starts_at'])) ?>"></label>
+                    <label>Ends <input type="datetime-local" name="ends_at" value="<?= e($toLocal($activity['ends_at'])) ?>"></label>
+                </div>
+                <div class="grid two tight">
+                    <label>Timezone <input name="timezone" value="<?= e($activity['timezone'] ?? 'UTC') ?>" maxlength="64"></label>
+                    <label>Status
+                        <select name="status">
+                            <?php foreach (\Nico\Edge\Activities\ActivityRepository::STATUSES as $status): ?>
+                                <option value="<?= e($status) ?>" <?= $activity['status'] === $status ? 'selected' : '' ?>><?= e(ucfirst($status)) ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </label>
+                </div>
+                <div class="grid two tight">
+                    <label>Location <input name="location" value="<?= e($activity['location'] ?? '') ?>"></label>
+                    <label>Capacity <input type="number" min="1" name="capacity" value="<?= e((string) ($activity['capacity'] ?? '')) ?>"></label>
+                </div>
+                <label>Join URL <input type="url" name="join_url" value="<?= e($activity['join_url'] ?? '') ?>"></label>
+                <?php if ($isHackathon): ?>
+                    <label>Rules URL <input type="url" name="rules_url" value="<?= e($activity['rules_url'] ?? '') ?>"></label>
+                <?php endif; ?>
+                <label>Visibility
+                    <select name="visibility">
+                        <option value="workspace" <?= $activity['visibility'] === 'workspace' ? 'selected' : '' ?>>Project members</option>
+                        <option value="public" <?= $activity['visibility'] === 'public' ? 'selected' : '' ?>>Any signed-in user with the link</option>
+                    </select>
+                </label>
+                <?php if ($isHackathon): ?>
+                    <div class="grid two tight">
+                        <label>Team size max <input type="number" min="1" max="100" name="team_size_max" value="<?= e((string) ($meta['team_size_max'] ?? 4)) ?>"></label>
+                        <label>Tracks <input name="tracks" value="<?= e($meta['tracks'] ?? '') ?>"></label>
+                    </div>
+                    <label>Prizes <input name="prizes" value="<?= e($meta['prizes'] ?? '') ?>"></label>
+                <?php else: ?>
+                    <label>Speaker name <input name="speaker_name" value="<?= e($meta['speaker_name'] ?? '') ?>"></label>
+                    <label>Speaker bio <textarea name="speaker_bio" rows="2"><?= e($meta['speaker_bio'] ?? '') ?></textarea></label>
+                <?php endif; ?>
+                <label>Agenda / timeline <textarea name="agenda" rows="4"><?= e($meta['agenda'] ?? '') ?></textarea></label>
+                <label>Resources / links <textarea name="resources" rows="3"><?= e($meta['resources'] ?? '') ?></textarea></label>
+                <button class="primary" type="submit">Save changes</button>
+            </form>
+        </details>
+    </section>
+<?php endif; ?>

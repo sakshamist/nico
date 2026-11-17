@@ -45,6 +45,17 @@ foreach ($tasks as $task) {
             <input type="hidden" name="type" value="report">
             <button class="button primary" type="submit">Generate report</button>
         </form>
+        <?php if ($can_manage): ?>
+            <form method="post" action="/app/projects/<?= (int) $project['id'] ?>/status" class="inline">
+                <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+                <select name="status">
+                    <?php foreach (\Nico\Edge\Projects\ProjectRepository::STATUSES as $projectStatus): ?>
+                        <option value="<?= e($projectStatus) ?>" <?= $project['status'] === $projectStatus ? 'selected' : '' ?>><?= e(ucfirst($projectStatus)) ?></option>
+                    <?php endforeach; ?>
+                </select>
+                <button class="button" type="submit">Set status</button>
+            </form>
+        <?php endif; ?>
     </div>
 </section>
 
