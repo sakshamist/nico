@@ -23,6 +23,33 @@
     <?php endif; ?>
 </section>
 
+<section class="panel narrow">
+    <h2>My notes</h2>
+    <form method="post" action="/intern/notes" class="stack">
+        <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+        <label>Title <input name="title" required maxlength="255"></label>
+        <label>Note <textarea name="body" rows="4" required></textarea></label>
+        <button class="primary" type="submit">Save note</button>
+    </form>
+    <?php if ($notes !== []): ?>
+        <ul class="list">
+            <?php foreach ($notes as $note): ?>
+                <li>
+                    <strong><?= e($note['title']) ?></strong>
+                    <span class="muted">· <?= e($note['updated_at']) ?></span>
+                    <p><?= nl2br(e($note['body'])) ?></p>
+                    <form method="post" action="/intern/notes/<?= (int) $note['id'] ?>/delete" class="inline">
+                        <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+                        <button class="link" type="submit">Delete</button>
+                    </form>
+                </li>
+            <?php endforeach; ?>
+        </ul>
+    <?php else: ?>
+        <p class="empty">No notes yet.</p>
+    <?php endif; ?>
+</section>
+
 <section class="panel">
     <h2>Lessons and quizzes</h2>
     <?php if ($artifacts === []): ?>

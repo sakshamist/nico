@@ -12,6 +12,8 @@ use Nico\Edge\Auth\UserRepository;
 use Nico\Edge\Generation\LessonService;
 use Nico\Edge\Generation\QuizService;
 use Nico\Edge\Generation\ReportService;
+use Nico\Edge\Interns\InternInteractionRepository;
+use Nico\Edge\Interns\InternProjectRepository;
 use Nico\Edge\Interns\InternRepository;
 use Nico\Edge\Knowledge\KnowledgeRepository;
 use Nico\Edge\Knowledge\HybridSearchService;
@@ -178,8 +180,52 @@ final class WebRoutes
             View::render('intern/course', [
                 'sources'   => $repo->assignedSources($internId),
                 'artifacts' => $repo->artifacts($internId),
+                'notes'     => (new InternInteractionRepository())->notes($internId),
             ], $user, 'Course', 'intern');
         });
+
+        $app->get('/intern/messages', static function (): void {
+            $user = self::requireIntern();
+            $internId = (int) $user['id'];
+            $repo = new InternInteractionRepository();
+            $repo->markRead($internId, $internId);
+
+            View::render('intern/messages', [
+                'messages' => $repo->messages($internId),
+            ], $user, 'Messages', 'intern');
+        });
+
+        $app->post('/intern/messages', self::post(static function (): void {
+            $user = self::requireIntern();
+            $body = trim((string) ($_POST['body'] ?? ''));
+            if ($body === '') {
+                throw new \InvalidArgumentException('Write a message first.');
+            }
+
+            (new InternInteractionRepository())->postMessage((int) $user['id'], (int) $user['id'], $body);
+            View::redirect('/intern/messages');
+        }, '/intern/messages'));
+
+        $app->post('/intern/notes', self::post(static function (): void {
+            $user = self::requireIntern();
+            $repo = new InternInteractionRepository();
+            $repo->addNote(
+                (int) $user['id'],
+                (string) ($_POST['title'] ?? ''),
+                (string) ($_POST['body'] ?? ''),
+            );
+
+            View::flash('success', 'Note saved.');
+            View::redirect('/intern/course');
+        }, '/intern/course'));
+
+        $app->post('/intern/notes/{id}/delete', self::post(static function (App $app, array $params): void {
+            $user = self::requireIntern();
+            (new InternInteractionRepository())->deleteNote((int) $user['id'], (int) $params['id']);
+
+            View::flash('success', 'Note deleted.');
+            View::redirect('/intern/course');
+        }, '/intern/course'));
 
         $app->get('/intern/learn/{id}', static function (App $app, array $params): void {
             $user = self::requireIntern();
@@ -312,6 +358,305 @@ final class WebRoutes
         }, '/intern'));
 
         // ------------------------------------------------------------ admin app
+        $app->get('/admin/material', static function (): void {
+            $user = self::requireAdmin();
+            $repo = new InternRepository();
+            $pdf = new PdfIngestionService();
+            $materials = array_map(static function (array $material) use ($repo): array {
+                $material['artifacts'] = $repo->artifactsForSource((int) $material['id']);
+                $material['assigned_intern_ids'] = $repo->assignedInternIds((int) $material['id']);
+
+                return $material;
+            }, $repo->allMaterials());
+
+            View::render('admin/material', [
+                'interns'      => $repo->interns(),
+                'materials'    => $materials,
+                'maxPdfBytes'  => $pdf->maxBytes(),
+                'maxTextBytes' => $pdf->maxTextBytes(),
+            ], $user, 'Material', 'admin');
+        });
+
+        $app->post('/admin/material', self::post(static function (): void {
+            $user = self::requireAdmin();
+            $internIds = array_map('intval', (array) ($_POST['intern_ids'] ?? []));
+            if ($internIds === []) {
+                throw new \InvalidArgumentException('Choose at least one intern.');
+            }
+
+            $repo = new InternRepository();
+            $created = (new KnowledgeRepository())->createSource(
+                (int) $user['id'],
+                'admin',
+                (string) ($_POST['title'] ?? ''),
+                (string) ($_POST['body'] ?? ''),
+                (string) ($_POST['kind'] ?? 'note'),
+                null,
+            );
+
+            foreach ($internIds as $internId) {
+                $repo->assignSource($internId, $created['source_id'], (int) $user['id']);
+            }
+
+            View::flash('success', 'Material added and assigned.');
+            View::redirect('/admin/material');
+        }, '/admin/material'));
+
+        $app->post('/admin/material/pdf', self::post(static function (): void {
+            $user = self::requireAdmin();
+            $internIds = array_map('intval', (array) ($_POST['intern_ids'] ?? []));
+            if ($internIds === []) {
+                throw new \InvalidArgumentException('Choose at least one intern.');
+            }
+
+            $repo = new InternRepository();
+            $created = (new PdfIngestionService())->ingest(
+                $_FILES['pdf'] ?? [],
+                (string) ($_POST['extracted_text'] ?? ''),
+                (int) $user['id'],
+                'admin',
+                (string) ($_POST['title'] ?? ''),
+                null,
+                (string) ($_POST['page_segments'] ?? '[]'),
+            );
+
+            foreach ($internIds as $internId) {
+                $repo->assignSource($internId, $created['source_id'], (int) $user['id']);
+            }
+
+            View::flash('success', 'PDF added and assigned.');
+            View::redirect('/admin/material');
+        }, '/admin/material'));
+
+        $app->post('/admin/material/{id}/assignments', self::post(static function (App $app, array $params): void {
+            $user = self::requireAdmin();
+            $sourceId = (int) $params['id'];
+            (new InternRepository())->replaceAssignments(
+                $sourceId,
+                array_map('intval', (array) ($_POST['intern_ids'] ?? [])),
+                (int) $user['id'],
+            );
+
+            View::flash('success', 'Assignments updated.');
+            View::redirect('/admin/material');
+        }, '/admin/material'));
+
+        $app->post('/admin/material/{id}/generate', self::post(static function (App $app, array $params): void {
+            $user = self::requireAdmin();
+            $sourceId = (int) $params['id'];
+            $type = (string) ($_POST['type'] ?? 'lesson');
+            $scope = (string) ($_POST['scope'] ?? 'shared');
+            $repo = new InternRepository();
+
+            if (!$repo->isAssignedToAnyIntern($sourceId)) {
+                throw new \InvalidArgumentException('Assign this material to an intern first.');
+            }
+
+            $internIds = $repo->assignedInternIds($sourceId);
+            $adminId = (int) $user['id'];
+            $created = [];
+
+            if ($type === 'lesson' || $type === 'quiz') {
+                $service = $type === 'lesson' ? new LessonService() : new QuizService();
+
+                if ($scope === 'per_intern') {
+                    foreach ($internIds as $internId) {
+                        $artifactId = $service->generateForSource($sourceId, $adminId, 'admin');
+                        $repo->assignArtifact($internId, $artifactId, $adminId);
+                        $created[] = $artifactId;
+                    }
+                } else {
+                    $created[] = $service->generateForSource($sourceId, $adminId, 'admin');
+                }
+            } elseif ($type === 'report') {
+                $service = new ReportService();
+
+                if ($scope === 'per_intern') {
+                    foreach ($internIds as $internId) {
+                        $artifactId = $service->generateForMaterial($sourceId, [$internId], $adminId, 'admin');
+                        $repo->assignArtifact($internId, $artifactId, $adminId);
+                        $created[] = $artifactId;
+                    }
+                } else {
+                    $created[] = $service->generateForMaterial($sourceId, $internIds, $adminId, 'admin');
+                }
+            } else {
+                throw new \InvalidArgumentException('Unknown material type.');
+            }
+
+            if ($scope === 'per_intern' && $created !== []) {
+                $marks = [];
+                $markParams = [];
+                foreach (array_values($created) as $index => $artifactId) {
+                    $name = 'artifact' . $index;
+                    $marks[] = ':' . $name;
+                    $markParams[$name] = $artifactId;
+                }
+                Database::pdo()->prepare(
+                    'UPDATE artifacts SET is_current = 1 WHERE id IN (' . implode(', ', $marks) . ')'
+                )->execute($markParams);
+            }
+
+            View::flash('success', count($created) . ' item(s) generated.');
+            View::redirect('/admin/material');
+        }, '/admin/material'));
+
+        $app->get('/admin/material/artifacts/{id}', static function (App $app, array $params): void {
+            $user = self::requireAdmin();
+            $artifact = (new InternRepository())->artifactForAdmin((int) $params['id']);
+
+            if ($artifact === null) {
+                View::notFound();
+            }
+
+            View::render('admin/artifact', ['artifact' => $artifact], $user, 'Generated material', 'admin');
+        });
+
+        $app->get('/admin/projects', static function (): void {
+            $user = self::requireAdmin();
+            $repo = new InternProjectRepository();
+
+            View::render('admin/projects', [
+                'projects' => $repo->adminProjects(),
+                'interns'  => (new InternRepository())->interns(),
+            ], $user, 'Projects', 'admin');
+        });
+
+        $app->post('/admin/projects', self::post(static function (): void {
+            $user = self::requireAdmin();
+            $mode = (string) ($_POST['mode'] ?? 'shared');
+            $internIds = array_values(array_unique(array_map('intval', (array) ($_POST['intern_ids'] ?? []))));
+
+            if (!in_array($mode, ['personal', 'shared'], true)) {
+                throw new \InvalidArgumentException('Unknown project mode.');
+            }
+            if ($internIds === []) {
+                throw new \InvalidArgumentException('Choose at least one intern.');
+            }
+            if ($mode === 'personal' && count($internIds) !== 1) {
+                throw new \InvalidArgumentException('A private project needs exactly one intern.');
+            }
+
+            $projects = new ProjectRepository();
+            $projectId = $projects->create(
+                (int) $user['id'],
+                (string) ($_POST['title'] ?? ''),
+                (string) ($_POST['description'] ?? '') !== '' ? (string) $_POST['description'] : null,
+                (string) ($_POST['kind'] ?? 'live'),
+            );
+
+            Database::pdo()->prepare('UPDATE projects SET mode = :mode WHERE id = :id')
+                ->execute(['mode' => $mode, 'id' => $projectId]);
+
+            $memberships = new MembershipRepository();
+            foreach ($internIds as $internId) {
+                $memberships->add($projectId, $internId, 'member');
+            }
+
+            View::flash('success', 'Project created.');
+            View::redirect('/admin/projects/' . $projectId);
+        }, '/admin/projects'));
+
+        $app->get('/admin/projects/{id}', static function (App $app, array $params): void {
+            $user = self::requireAdmin();
+            $repo = new InternProjectRepository();
+            $project = $repo->project((int) $params['id']);
+
+            if ($project === null) {
+                View::notFound();
+            }
+            $projectId = (int) $project['id'];
+
+            View::render('admin/project', [
+                'project'    => $project,
+                'members'    => $repo->members($projectId),
+                'tasks'      => $repo->tasks($projectId),
+                'activities' => $repo->activities($projectId),
+            ], $user, (string) $project['title'], 'admin');
+        });
+
+        $app->post('/admin/projects/{id}/tasks', self::post(static function (App $app, array $params): void {
+            $user = self::requireAdmin();
+            $projectId = (int) $params['id'];
+            $repo = new InternProjectRepository();
+
+            if ($repo->project($projectId) === null) {
+                View::notFound();
+            }
+
+            $tasks = new TaskRepository();
+            $taskId = $tasks->create(
+                $projectId,
+                (string) ($_POST['title'] ?? ''),
+                null,
+                null,
+                3,
+                (string) ($_POST['due_at'] ?? '') !== '' ? (string) $_POST['due_at'] : null,
+                (int) $user['id'],
+                null,
+                (string) ($_POST['milestone'] ?? '') !== '' ? (string) $_POST['milestone'] : null,
+            );
+
+            $assigneeId = (int) ($_POST['assignee_id'] ?? 0);
+            if ($assigneeId > 0) {
+                $tasks->assign($taskId, $assigneeId, (int) $user['id'], 'manual');
+            }
+
+            View::flash('success', 'Task added.');
+            View::redirect('/admin/projects/' . $projectId);
+        }, '/admin/projects'));
+
+        $app->get('/intern/projects', static function (): void {
+            $user = self::requireIntern();
+            $internId = (int) $user['id'];
+            $repo = new InternProjectRepository();
+            $projects = $repo->internProjects($internId);
+
+            $tasksByProject = [];
+            $activitiesByProject = [];
+            foreach ($projects as $project) {
+                $projectId = (int) $project['id'];
+                $tasksByProject[$projectId] = $repo->tasks($projectId, $internId);
+                $activitiesByProject[$projectId] = $repo->activities($projectId);
+            }
+
+            View::render('intern/projects', [
+                'projects'            => $projects,
+                'tasksByProject'      => $tasksByProject,
+                'activitiesByProject' => $activitiesByProject,
+            ], $user, 'Projects', 'intern');
+        });
+
+        $app->post('/intern/tasks/{id}/status', self::post(static function (App $app, array $params): void {
+            $user = self::requireIntern();
+            $taskId = (int) $params['id'];
+            $status = (string) ($_POST['status'] ?? 'done');
+
+            $pdo = Database::pdo();
+            $stmt = $pdo->prepare(
+                'SELECT t.id FROM tasks t
+                  JOIN project_members pm ON pm.project_id = t.project_id
+                 WHERE t.id = :task AND pm.user_id = :member AND t.assignee_id = :assignee LIMIT 1'
+            );
+            $stmt->execute([
+                'task'    => $taskId,
+                'member'  => (int) $user['id'],
+                'assignee' => (int) $user['id'],
+            ]);
+
+            if ($stmt->fetchColumn() === false) {
+                View::notFound();
+            }
+            if (!in_array($status, ['todo', 'in_progress', 'review', 'done', 'blocked'], true)) {
+                throw new \InvalidArgumentException('Unknown task status.');
+            }
+
+            $pdo->prepare('UPDATE tasks SET status = :status, updated_at = :now WHERE id = :task')
+                ->execute(['status' => $status, 'now' => gmdate('c'), 'task' => $taskId]);
+
+            View::redirect('/intern/projects');
+        }, '/intern/projects'));
+
         $app->get('/admin/interns', static function (): void {
             $user = self::requireAdmin();
 
@@ -330,19 +675,43 @@ final class WebRoutes
             }
 
             $pdf = new PdfIngestionService();
-            $tab = (string) Request::query('tab', 'material') === 'progress' ? 'progress' : 'material';
+            $tabRaw = (string) Request::query('tab', 'material');
+            $tab = in_array($tabRaw, ['progress', 'messages'], true) ? $tabRaw : 'material';
             $internId = (int) $intern['id'];
+            $interactions = new InternInteractionRepository();
+
+            if ($tab === 'messages') {
+                $interactions->markRead($internId, (int) $user['id']);
+            }
 
             View::render('admin/intern_detail', [
                 'intern'       => $intern,
                 'tab'          => $tab,
                 'sources'      => $repo->assignedSources($internId),
+                'artifacts'    => $repo->artifacts($internId),
                 'progress'     => $repo->progress($internId),
                 'attempts'     => $repo->attempts($internId),
+                'messages'     => $interactions->messages($internId),
                 'maxPdfBytes'  => $pdf->maxBytes(),
                 'maxTextBytes' => $pdf->maxTextBytes(),
             ], $user, (string) $intern['email'], 'admin');
         });
+
+        $app->post('/admin/interns/{id}/messages', self::post(static function (App $app, array $params): void {
+            $user = self::requireAdmin();
+            $internId = (int) $params['id'];
+            $body = trim((string) ($_POST['body'] ?? ''));
+
+            if ((new InternRepository())->find($internId) === null) {
+                View::notFound();
+            }
+            if ($body === '') {
+                throw new \InvalidArgumentException('Write a message first.');
+            }
+
+            (new InternInteractionRepository())->postMessage($internId, (int) $user['id'], $body);
+            View::redirect('/admin/interns/' . $internId . '?tab=messages');
+        }, '/admin/interns'));
 
         $app->post('/admin/interns/{id}/material', self::post(static function (App $app, array $params): void {
             $user = self::requireAdmin();

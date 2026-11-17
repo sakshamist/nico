@@ -6,6 +6,7 @@ namespace Nico\Edge\Generation;
 
 use Nico\Edge\Activities\ActivityRepository;
 use Nico\Edge\Artifacts\ArtifactRepository;
+use Nico\Edge\Interns\InternRepository;
 use Nico\Edge\Knowledge\KnowledgeRepository;
 use Nico\Edge\Projects\MembershipRepository;
 use Nico\Edge\Projects\ProjectRepository;
@@ -225,6 +226,113 @@ final class ReportService
                     'artifact_ids' => array_column($artifactItems, 'artifact_id'),
                     'source_ids'   => array_column($sourceItems, 'source_id'),
                     'activity_ids' => array_column($activityItems, 'activity_id'),
+                ],
+            ],
+            'status'         => 'ready',
+            'created_by'     => $userId,
+        ]);
+    }
+
+    /** @param list<int> $internIds */
+    public function generateForMaterial(int $sourceId, array $internIds, int $userId, string $role): int
+    {
+        $source = $this->knowledge->findSource($sourceId);
+        if ($source === null) {
+            throw new \InvalidArgumentException('Unknown material.');
+        }
+
+        $resourceId = (int) $source['resource_id'];
+        $learning = array_values(array_filter(
+            $this->artifacts->listForResource($resourceId),
+            static fn (array $a): bool => in_array((string) $a['type'], ['lesson', 'quiz'], true),
+        ));
+
+        $repo = new InternRepository();
+        $interns = [];
+        $progress = [];
+        $attempts = [];
+
+        foreach (array_unique(array_map('intval', $internIds)) as $internId) {
+            $intern = $repo->find($internId);
+            if ($intern === null) {
+                continue;
+            }
+            $interns[] = $intern;
+            foreach ($repo->progress($internId) as $row) {
+                $progress[] = ['intern' => $intern['email']] + $row;
+            }
+            foreach ($repo->attempts($internId) as $row) {
+                $attempts[] = ['intern' => $intern['email']] + $row;
+            }
+        }
+
+        $citations = [[
+            'kind'  => 'source',
+            'id'    => $sourceId,
+            'label' => 'Material: ' . $source['title'],
+        ]];
+        foreach ($learning as $artifact) {
+            $citations[] = [
+                'kind'  => 'artifact',
+                'id'    => (int) $artifact['id'],
+                'label' => ucfirst((string) $artifact['type']) . ': ' . ($artifact['content']['title'] ?? ''),
+            ];
+        }
+
+        $internItems = array_map(static fn (array $i): array => [
+            'email' => $i['email'],
+        ], $interns);
+        $learningItems = array_map(static fn (array $a): array => [
+            'artifact_id' => (int) $a['id'],
+            'type'        => (string) $a['type'],
+            'title'       => (string) ($a['content']['title'] ?? ucfirst((string) $a['type'])),
+        ], $learning);
+        $progressItems = array_map(static fn (array $p): array => [
+            'intern'    => (string) $p['intern'],
+            'title'     => (string) ($p['title'] ?? 'Lesson'),
+            'position'  => (int) $p['position'],
+            'completed' => (bool) $p['completed'],
+        ], $progress);
+        $attemptItems = array_map(static fn (array $a): array => [
+            'intern' => (string) $a['intern'],
+            'title'  => (string) ($a['title'] ?? 'Quiz'),
+            'score'  => $a['score'],
+            'total'  => (int) $a['total'],
+        ], $attempts);
+
+        $gaps = [];
+        if ($learning === []) {
+            $gaps[] = 'No lessons or quizzes have been generated from this material.';
+        }
+        if ($progress === [] && $attempts === []) {
+            $gaps[] = 'No intern progress has been recorded yet.';
+        }
+
+        $content = [
+            'title'        => 'Report: ' . $source['title'],
+            'sections'     => [
+                ['heading' => 'Material', 'body' => $source['title'] . ' · ' . $source['kind']],
+                ['heading' => 'Assigned interns', 'items' => $internItems],
+                ['heading' => 'Generated learning', 'items' => $learningItems],
+                ['heading' => 'Lesson progress', 'items' => $progressItems],
+                ['heading' => 'Quiz results', 'items' => $attemptItems],
+                ['heading' => 'Gaps', 'items' => $gaps],
+            ],
+            'citations'    => $citations,
+            'generated_at' => gmdate('c'),
+            'generator'    => 'material-report-v1',
+        ];
+
+        return $this->artifacts->create([
+            'resource_id'    => $resourceId,
+            'module'         => 'M7',
+            'type'           => 'report',
+            'schema_version' => 1,
+            'content'        => $content,
+            'provenance'     => [
+                'generated_from' => [
+                    'source_id'  => $sourceId,
+                    'intern_ids' => array_column($interns, 'id'),
                 ],
             ],
             'status'         => 'ready',

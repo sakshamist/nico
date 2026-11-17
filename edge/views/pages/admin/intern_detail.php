@@ -10,6 +10,7 @@
     <div class="row tabs">
         <a class="button <?= $tab === 'material' ? 'primary' : '' ?>" href="/admin/interns/<?= (int) $intern['id'] ?>?tab=material">Material</a>
         <a class="button <?= $tab === 'progress' ? 'primary' : '' ?>" href="/admin/interns/<?= (int) $intern['id'] ?>?tab=progress">Progress</a>
+        <a class="button <?= $tab === 'messages' ? 'primary' : '' ?>" href="/admin/interns/<?= (int) $intern['id'] ?>?tab=messages">Messages</a>
     </div>
 </section>
 
@@ -51,6 +52,32 @@
                 <?php endforeach; ?>
             </ul>
         <?php endif; ?>
+    </section>
+<?php elseif ($tab === 'messages'): ?>
+    <section class="panel">
+        <h2>Conversation</h2>
+        <?php if ($messages === []): ?>
+            <p class="empty">No messages yet.</p>
+        <?php else: ?>
+            <ul class="list">
+                <?php foreach ($messages as $message): ?>
+                    <li>
+                        <strong><?= (string) $message['sender_role'] === 'admin' ? 'You' : e($intern['email']) ?></strong>
+                        <span class="muted">· <?= e($message['created_at']) ?></span>
+                        <p><?= nl2br(e($message['body'])) ?></p>
+                    </li>
+                <?php endforeach; ?>
+            </ul>
+        <?php endif; ?>
+    </section>
+
+    <section class="panel narrow">
+        <h2>Write a message</h2>
+        <form method="post" action="/admin/interns/<?= (int) $intern['id'] ?>/messages" class="stack">
+            <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+            <label>Message <textarea name="body" rows="5" required></textarea></label>
+            <button class="primary" type="submit">Send</button>
+        </form>
     </section>
 <?php else: ?>
     <section class="panel narrow">
@@ -110,6 +137,24 @@
                                 <button class="link" type="submit">Generate quiz</button>
                             </form>
                         </div>
+                    </li>
+                <?php endforeach; ?>
+            </ul>
+        <?php endif; ?>
+    </section>
+
+    <section class="panel">
+        <h2>Generated material</h2>
+        <?php if ($artifacts === []): ?>
+            <p class="empty">Nothing generated for this intern yet.</p>
+        <?php else: ?>
+            <ul class="list">
+                <?php foreach ($artifacts as $artifact): ?>
+                    <li>
+                        <a href="/admin/material/artifacts/<?= (int) $artifact['id'] ?>">
+                            <?= e($artifact['content']['title'] ?? ucfirst($artifact['type'])) ?>
+                        </a>
+                        <span class="muted">· <?= e($artifact['type']) ?></span>
                     </li>
                 <?php endforeach; ?>
             </ul>

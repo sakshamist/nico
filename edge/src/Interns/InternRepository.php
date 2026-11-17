@@ -77,6 +77,41 @@ final class InternRepository
         return $stmt->fetchColumn() !== false;
     }
 
+    public function isAssignedToAnyIntern(int $sourceId): bool
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT 1 FROM intern_material_assignments WHERE source_id = :source LIMIT 1'
+        );
+        $stmt->execute(['source' => $sourceId]);
+
+        return $stmt->fetchColumn() !== false;
+    }
+
+    public function assignArtifact(int $internId, int $artifactId, ?int $adminId): void
+    {
+        $this->pdo->prepare(
+            'INSERT INTO intern_artifact_assignments (intern_id, artifact_id, assigned_by, created_at)
+             VALUES (:intern, :artifact, :admin, :now)
+             ON DUPLICATE KEY UPDATE assigned_by = VALUES(assigned_by), created_at = VALUES(created_at)'
+        )->execute([
+            'intern'  => $internId,
+            'artifact' => $artifactId,
+            'admin'   => $adminId,
+            'now'     => gmdate('c'),
+        ]);
+    }
+
+    /** @return list<int> */
+    public function artifactInternIds(int $artifactId): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT intern_id FROM intern_artifact_assignments WHERE artifact_id = :artifact ORDER BY intern_id'
+        );
+        $stmt->execute(['artifact' => $artifactId]);
+
+        return array_map('intval', $stmt->fetchAll(PDO::FETCH_COLUMN));
+    }
+
     /** @return list<array<string,mixed>> */
     public function assignedSources(int $internId): array
     {
@@ -105,10 +140,12 @@ final class InternRepository
                FROM artifacts a
                JOIN knowledge_sources s ON s.resource_id = a.resource_id
                JOIN intern_material_assignments ia ON ia.source_id = s.id
+               LEFT JOIN intern_artifact_assignments aa ON aa.artifact_id = a.id
               WHERE ia.intern_id = :intern AND a.is_current = 1 AND a.status = \'ready\'
+                AND (aa.id IS NULL OR aa.intern_id = :owner)
               ORDER BY a.id DESC'
         );
-        $stmt->execute(['intern' => $internId]);
+        $stmt->execute(['intern' => $internId, 'owner' => $internId]);
 
         return array_map(self::hydrateArtifact(...), $stmt->fetchAll());
     }
@@ -121,11 +158,13 @@ final class InternRepository
                FROM artifacts a
                JOIN knowledge_sources s ON s.resource_id = a.resource_id
                JOIN intern_material_assignments ia ON ia.source_id = s.id
+               LEFT JOIN intern_artifact_assignments aa ON aa.artifact_id = a.id
               WHERE ia.intern_id = :intern AND a.id = :artifact
                 AND a.is_current = 1 AND a.status = \'ready\'
+                AND (aa.id IS NULL OR aa.intern_id = :owner)
               LIMIT 1'
         );
-        $stmt->execute(['intern' => $internId, 'artifact' => $artifactId]);
+        $stmt->execute(['intern' => $internId, 'artifact' => $artifactId, 'owner' => $internId]);
         $row = $stmt->fetch();
 
         return $row === false ? null : self::hydrateArtifact($row);
@@ -180,12 +219,124 @@ final class InternRepository
         }, $stmt->fetchAll());
     }
 
+    /** @return list<array<string,mixed>> */
+    public function allMaterials(): array
+    {
+        $stmt = $this->pdo->query(
+            'SELECT s.id, s.title, s.kind, s.resource_id, s.created_at,
+                    GROUP_CONCAT(u.email ORDER BY u.email SEPARATOR ", ") AS interns,
+                    COUNT(DISTINCT ia.intern_id) AS intern_count
+               FROM knowledge_sources s
+               JOIN intern_material_assignments ia ON ia.source_id = s.id
+               JOIN users u ON u.id = ia.intern_id
+              WHERE s.status = \'ready\'
+              GROUP BY s.id
+              ORDER BY s.id DESC'
+        );
+
+        return array_map(static function (array $row): array {
+            $row['id'] = (int) $row['id'];
+            $row['resource_id'] = (int) $row['resource_id'];
+            $row['intern_count'] = (int) $row['intern_count'];
+
+            return $row;
+        }, $stmt->fetchAll());
+    }
+
+    /** @return list<int> */
+    public function assignedInternIds(int $sourceId): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT intern_id FROM intern_material_assignments WHERE source_id = :source ORDER BY intern_id'
+        );
+        $stmt->execute(['source' => $sourceId]);
+
+        return array_map('intval', $stmt->fetchAll(PDO::FETCH_COLUMN));
+    }
+
+    /** @param list<int> $internIds */
+    public function replaceAssignments(int $sourceId, array $internIds, int $adminId): void
+    {
+        $valid = [];
+        foreach (array_unique(array_map('intval', $internIds)) as $internId) {
+            if ($this->find($internId) !== null) {
+                $valid[] = $internId;
+            }
+        }
+
+        $ownTransaction = !$this->pdo->inTransaction();
+        if ($ownTransaction) {
+            $this->pdo->beginTransaction();
+        }
+
+        try {
+            $this->pdo->prepare('DELETE FROM intern_material_assignments WHERE source_id = :source')
+                ->execute(['source' => $sourceId]);
+
+            $insert = $this->pdo->prepare(
+                'INSERT INTO intern_material_assignments (intern_id, source_id, assigned_by, created_at)
+                 VALUES (:intern, :source, :admin, :now)'
+            );
+            $now = gmdate('c');
+            foreach ($valid as $internId) {
+                $insert->execute([
+                    'intern' => $internId,
+                    'source' => $sourceId,
+                    'admin'  => $adminId,
+                    'now'    => $now,
+                ]);
+            }
+
+            if ($ownTransaction) {
+                $this->pdo->commit();
+            }
+        } catch (\Throwable $e) {
+            if ($ownTransaction && $this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw $e;
+        }
+    }
+
+    /** @return list<array<string,mixed>> */
+    public function artifactsForSource(int $sourceId): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT DISTINCT a.id, a.type, a.content, a.created_at,
+                    (SELECT GROUP_CONCAT(u.email ORDER BY u.email SEPARATOR ", ")
+                       FROM intern_artifact_assignments aa
+                       JOIN users u ON u.id = aa.intern_id
+                      WHERE aa.artifact_id = a.id) AS exclusive_interns
+               FROM artifacts a
+               JOIN knowledge_sources s ON s.resource_id = a.resource_id
+              WHERE s.id = :source AND a.is_current = 1 AND a.status = \'ready\'
+              ORDER BY a.id DESC'
+        );
+        $stmt->execute(['source' => $sourceId]);
+
+        return array_map(self::hydrateArtifact(...), $stmt->fetchAll());
+    }
+
+    /** @return array<string,mixed>|null */
+    public function artifactForAdmin(int $artifactId): ?array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT id, type, content, created_at FROM artifacts
+              WHERE id = :id AND is_current = 1 AND status = \'ready\' LIMIT 1'
+        );
+        $stmt->execute(['id' => $artifactId]);
+        $row = $stmt->fetch();
+
+        return $row === false ? null : self::hydrateArtifact($row);
+    }
+
     /** @param array<string,mixed> $row */
     private static function hydrateArtifact(array $row): array
     {
         $row['id'] = (int) $row['id'];
         $decoded = json_decode((string) ($row['content'] ?? ''), true);
         $row['content'] = is_array($decoded) ? $decoded : [];
+        $row['scope'] = empty($row['exclusive_interns'] ?? '') ? 'shared' : 'per_intern';
 
         return $row;
     }

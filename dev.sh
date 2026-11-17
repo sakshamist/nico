@@ -23,10 +23,10 @@ case "${1:-help}" in
     echo "edge on http://127.0.0.1:8080  (health: /health; 20M uploads)"
     ;;
   stop)     pkill -f "php.*-S 127.0.0.1:8080" 2>/dev/null; echo "server stopped" ;;
-  test)     php "$ROOT/edge/tests/verify_sprint1.php" && php "$ROOT/edge/tests/verify_m0.php" && php "$ROOT/edge/tests/verify_modules.php" && php "$ROOT/edge/tests/verify_interfaces.php" ;;
-  test:m0)  php "$ROOT/edge/tests/verify_m0.php" ;;
-  test:modules) php "$ROOT/edge/tests/verify_modules.php" ;;
-  test:interfaces) php "$ROOT/edge/tests/verify_interfaces.php" ;;
+  test)     php "$ROOT/edge/tests/verify_sprint1.php" && php "$ROOT/edge/tests/verify_m0.php" && php "$ROOT/edge/tests/verify_modules.php" && php "$ROOT/edge/tests/verify_interfaces.php" && php "$ROOT/edge/tests/cleanup_test_users.php" ;;
+  test:m0)  php "$ROOT/edge/tests/verify_m0.php" && php "$ROOT/edge/tests/cleanup_test_users.php" ;;
+  test:modules) php "$ROOT/edge/tests/verify_modules.php" && php "$ROOT/edge/tests/cleanup_test_users.php" ;;
+  test:interfaces) php "$ROOT/edge/tests/verify_interfaces.php" && php "$ROOT/edge/tests/cleanup_test_users.php" ;;
   jobs:reap) php "$ROOT/edge/bin/reap.php" ;;
   preflight) python3 "$ROOT/worker/preflight.py" "${@:2}" ;;
   *) echo "usage: ./dev.sh {db:start|db:stop|db:logs|migrate [cmd]|serve|stop|test|test:m0|test:modules|test:interfaces|jobs:reap|preflight [args]}" ;;

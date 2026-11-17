@@ -12,6 +12,8 @@
     <a class="brand" href="/admin/interns">Nico<span>.</span></a>
     <nav class="nav">
         <a href="/admin/interns" class="<?= str_starts_with($path, '/admin/interns') ? 'active' : '' ?>">Interns</a>
+        <a href="/admin/material" class="<?= str_starts_with($path, '/admin/material') ? 'active' : '' ?>">Material</a>
+        <a href="/admin/projects" class="<?= str_starts_with($path, '/admin/projects') ? 'active' : '' ?>">Projects</a>
     </nav>
     <div class="account">
         <span class="pill">Admin</span>

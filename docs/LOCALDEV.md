@@ -46,6 +46,7 @@ template.
 | `./dev.sh test:m0` | M0 platform checks only |
 | `./dev.sh test:modules` | M1–M8 workflow checks only |
 | `./dev.sh test:interfaces` | Slice A two-app flow only |
+| `php edge/tests/cleanup_test_users.php` | Remove accounts created by test runs |
 | `./dev.sh preflight` | Check the compute machine |
 | `./dev.sh preflight --json` | Machine-readable preflight output |
 

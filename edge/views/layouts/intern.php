@@ -13,6 +13,8 @@
     <nav class="nav">
         <a href="/intern" class="<?= str_starts_with($path, '/intern') && $path !== '/intern/course' ? 'active' : '' ?>">Home</a>
         <a href="/intern/course" class="<?= str_starts_with($path, '/intern/course') ? 'active' : '' ?>">Course</a>
+        <a href="/intern/messages" class="<?= str_starts_with($path, '/intern/messages') ? 'active' : '' ?>">Messages</a>
+        <a href="/intern/projects" class="<?= str_starts_with($path, '/intern/projects') ? 'active' : '' ?>">Projects</a>
     </nav>
     <div class="account">
         <span class="pill">Intern</span>

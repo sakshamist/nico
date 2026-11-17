@@ -285,6 +285,172 @@ check('admin can assign a PDF', $pdfUpload['status'] === 302
     && str_contains($course['text'], 'Intern PDF'), (string) $pdfUpload['status']);
 @unlink($pdfPath);
 
+$materialPage = http('GET', "$base/admin/material", null, $adminJar);
+$materialCsrf = csrfFrom($materialPage['text']);
+$sharedTitle = 'Shared safety brief';
+$sharedUpload = httpForm("$base/admin/material", [
+    '_csrf'      => $materialCsrf,
+    'title'      => $sharedTitle,
+    'kind'       => 'brief',
+    'body'       => 'Every intern should read this shared safety brief.',
+    'intern_ids' => [(string) $internId, (string) $otherId],
+], $adminJar);
+$sharedStmt = $pdo->prepare('SELECT source_id FROM intern_material_assignments WHERE intern_id = :id ORDER BY source_id DESC LIMIT 1');
+$sharedStmt->execute(['id' => $internId]);
+$sharedSourceId = (int) $sharedStmt->fetchColumn();
+$internCourse = http('GET', "$base/intern/course", null, $internJar);
+$otherCourse = http('GET', "$base/intern/course", null, $otherJar);
+check('material can be assigned to multiple interns at once', $sharedUpload['status'] === 302
+    && $sharedSourceId > 0
+    && str_contains($internCourse['text'], $sharedTitle)
+    && str_contains($otherCourse['text'], $sharedTitle), (string) $sharedUpload['status']);
+
+$sharedGenerate = httpForm("$base/admin/interns/$internId/sources/$sharedSourceId/generate", [
+    '_csrf' => $csrf,
+    'type'  => 'lesson',
+], $adminJar);
+$materialPage = http('GET', "$base/admin/material", null, $adminJar);
+$internDetail = http('GET', "$base/admin/interns/$internId?tab=material", null, $adminJar);
+check('admin sees material and generated learning in both places', $sharedGenerate['status'] === 302
+    && $materialPage['status'] === 200
+    && $internDetail['status'] === 200
+    && str_contains($materialPage['text'], $sharedTitle)
+    && str_contains($materialPage['text'], 'Generated material')
+    && str_contains($internDetail['text'], 'Generated material'),
+    'gen=' . $sharedGenerate['status']
+        . ' material_page=' . $materialPage['status']
+        . ' intern_detail=' . $internDetail['status']
+        . ' has_shared=' . (int) str_contains($materialPage['text'], $sharedTitle)
+        . ' has_generated=' . (int) str_contains($materialPage['text'], 'Generated material')
+        . ' detail_generated=' . (int) str_contains($internDetail['text'], 'Generated material'));
+
+$editAssignments = httpForm("$base/admin/material/$sharedSourceId/assignments", [
+    '_csrf'      => $materialCsrf,
+    'intern_ids' => [(string) $internId],
+], $adminJar);
+$otherCourse = http('GET', "$base/intern/course", null, $otherJar);
+check('assignments can be changed later', $editAssignments['status'] === 302
+    && !str_contains($otherCourse['text'], $sharedTitle), (string) $editAssignments['status']);
+
+$scopeTitle = 'Scope test brief';
+httpForm("$base/admin/material", [
+    '_csrf'      => $materialCsrf,
+    'title'      => $scopeTitle,
+    'kind'       => 'brief',
+    'body'       => 'Shared material used to check generation scope. Emergency stop access must be checked before every field test. Battery charging requires insulated tools and a fire resistant area. After each session the team records incidents and reviews the safety checklist. Operators must keep the workspace clear and report hazards immediately.',
+    'intern_ids' => [(string) $internId, (string) $otherId],
+], $adminJar);
+$scopeStmt = $pdo->prepare('SELECT id FROM knowledge_sources WHERE title = :title ORDER BY id DESC LIMIT 1');
+$scopeStmt->execute(['title' => $scopeTitle]);
+$scopeSourceId = (int) $scopeStmt->fetchColumn();
+
+$sharedLesson = httpForm("$base/admin/material/$scopeSourceId/generate", [
+    '_csrf' => $materialCsrf,
+    'type'  => 'lesson',
+    'scope' => 'shared',
+], $adminJar);
+$internCourse = http('GET', "$base/intern/course", null, $internJar);
+$otherCourse = http('GET', "$base/intern/course", null, $otherJar);
+check('shared generation is visible to every assigned intern', $sharedLesson['status'] === 302
+    && str_contains($internCourse['text'], 'Lesson: ' . $scopeTitle)
+    && str_contains($otherCourse['text'], 'Lesson: ' . $scopeTitle), (string) $sharedLesson['status']);
+
+$perInternQuiz = httpForm("$base/admin/material/$scopeSourceId/generate", [
+    '_csrf' => $materialCsrf,
+    'type'  => 'quiz',
+    'scope' => 'per_intern',
+], $adminJar);
+$internCourse = http('GET', "$base/intern/course", null, $internJar);
+$otherCourse = http('GET', "$base/intern/course", null, $otherJar);
+$perInternStmt = $pdo->prepare(
+    'SELECT COUNT(DISTINCT aa.artifact_id) AS copies,
+            COUNT(*) AS assignments
+       FROM intern_artifact_assignments aa
+       JOIN artifacts a ON a.id = aa.artifact_id
+      WHERE a.type = "quiz"
+        AND a.resource_id = (SELECT resource_id FROM knowledge_sources WHERE id = :source)'
+);
+$perInternStmt->execute(['source' => $scopeSourceId]);
+$perInternRows = $perInternStmt->fetch();
+check('per-intern generation creates one copy per assigned intern', $perInternQuiz['status'] === 302
+    && (int) ($perInternRows['copies'] ?? 0) === 2
+    && (int) ($perInternRows['assignments'] ?? 0) === 2
+    && str_contains($internCourse['text'], 'Quiz: ' . $scopeTitle)
+    && str_contains($internCourse['text'], 'Quiz: ' . $scopeTitle)
+    && str_contains($otherCourse['text'], 'Quiz: ' . $scopeTitle),
+    json_encode($perInternRows) . ' intern=' . (int) str_contains($internCourse['text'], 'Quiz: ' . $scopeTitle)
+        . ' other=' . (int) str_contains($otherCourse['text'], 'Quiz: ' . $scopeTitle));
+
+$reportGeneration = httpForm("$base/admin/material/$scopeSourceId/generate", [
+    '_csrf' => $materialCsrf,
+    'type'  => 'report',
+    'scope' => 'shared',
+], $adminJar);
+$materialPage = http('GET', "$base/admin/material", null, $adminJar);
+check('admin can generate a report from shared material', $reportGeneration['status'] === 302
+    && str_contains($materialPage['text'], 'Report: ' . $scopeTitle), (string) $reportGeneration['status']);
+
+$internMessage = httpForm("$base/intern/messages", [
+    '_csrf' => $quizCsrf,
+    'body'  => 'Hello admin, I finished the first lesson.',
+], $internJar);
+$adminThread = http('GET', "$base/admin/interns/$internId?tab=messages", null, $adminJar);
+check('intern can message admin', $internMessage['status'] === 302
+    && str_contains($adminThread['text'], 'I finished the first lesson.'), (string) $internMessage['status']);
+
+$adminMessage = httpForm("$base/admin/interns/$internId/messages", [
+    '_csrf' => $materialCsrf,
+    'body'  => 'Well done. Keep going.',
+], $adminJar);
+$internThread = http('GET', "$base/intern/messages", null, $internJar);
+check('admin can reply to intern', $adminMessage['status'] === 302
+    && str_contains($internThread['text'], 'Well done. Keep going.'), (string) $adminMessage['status']);
+
+$notePost = httpForm("$base/intern/notes", [
+    '_csrf' => $quizCsrf,
+    'title' => 'My private note',
+    'body'  => 'Remember to review the safety checklist.',
+], $internJar);
+$internCourse = http('GET', "$base/intern/course", null, $internJar);
+check('intern can keep private notes', $notePost['status'] === 302
+    && str_contains($internCourse['text'], 'My private note'), (string) $notePost['status']);
+
+$projectTitle = 'Shared live project';
+$projectPost = httpForm("$base/admin/projects", [
+    '_csrf'      => $materialCsrf,
+    'title'      => $projectTitle,
+    'kind'       => 'live',
+    'mode'       => 'shared',
+    'intern_ids' => [(string) $internId, (string) $otherId],
+], $adminJar);
+preg_match('#/admin/projects/(\d+)#', $projectPost['headers'], $projectMatch);
+$projectId = (int) ($projectMatch[1] ?? 0);
+$projectList = http('GET', "$base/admin/projects", null, $adminJar);
+check('admin can create a shared project for multiple interns', $projectPost['status'] === 302
+    && $projectId > 0
+    && str_contains($projectList['text'], $projectTitle), (string) $projectPost['status']);
+
+$taskPost = httpForm("$base/admin/projects/$projectId/tasks", [
+    '_csrf'      => $materialCsrf,
+    'title'      => 'Inspect the charging bay',
+    'milestone'  => 'Week one',
+    'assignee_id' => (string) $internId,
+], $adminJar);
+$internProjects = http('GET', "$base/intern/projects", null, $internJar);
+preg_match('/tasks\/(\d+)\/status/', $internProjects['text'], $taskMatch);
+$taskId = (int) ($taskMatch[1] ?? 0);
+check('intern sees assigned project task', $taskPost['status'] === 302
+    && $taskId > 0
+    && str_contains($internProjects['text'], 'Inspect the charging bay'), (string) $taskPost['status']);
+
+$taskDone = httpForm("$base/intern/tasks/$taskId/status", [
+    '_csrf' => $quizCsrf,
+    'status' => 'done',
+], $internJar);
+$adminProject = http('GET', "$base/admin/projects/$projectId", null, $adminJar);
+check('admin sees intern task completion', $taskDone['status'] === 302
+    && str_contains($adminProject['text'], 'done'), (string) $taskDone['status']);
+
 echo "\n" . str_repeat('=', 60) . "\n";
 printf("  %d passed, %d failed\n\n", $passed, $failed);
 exit($failed === 0 ? 0 : 1);

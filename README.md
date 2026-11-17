@@ -11,6 +11,9 @@ Nico turns learning sources into lessons, quizzes, project work, and reports. Th
 
 - Two role-gated apps: `/intern` for learners and `/admin` for managing interns. No shared dashboard.
 - **Slice A flow:** admin opens an intern → adds written/PDF material → generates a lesson/quiz → intern learns it → admin sees completion and quiz scores.
+- **Shared material:** admin can add one material item from **Material**, assign it to several interns, change assignments later, generate lessons/quizzes/reports as shared or per-intern, and see everything generated from it.
+- **Interaction:** admin and interns can message each other; interns can keep private notes.
+- **Projects:** admin can create private/shared projects, assign interns, give tasks, and see completion; interns see only their projects and tasks.
 - Accounts, sessions, roles, capability profiles, and project membership.
 - Text notes/briefs/transcripts and PDF upload.
 - PDF text is read in the browser with vendored pdf.js; `pdftotext` optionally re-checks it on the edge. Page numbers are kept on chunks.
@@ -30,8 +33,6 @@ Nico turns learning sources into lessons, quizzes, project work, and reports. Th
 - Source-edit/reprocess flow with re-indexing.
 - cPanel storage driver; uploads use a local `STORAGE_PATH` placeholder.
 - Blog/PWA delivery and full publishing flow.
-- **Slice B:** intern/admin project screens, private/shared projects, and task management.
-- **Slice C:** reports, two-way messages, and intern personal notes inside the two apps.
 
 [`ARCH.md`](ARCH.md) and [`FLOW.md`](FLOW.md) describe the intended edge/compute architecture. The current MVP is deliberately synchronous and local-first.
 
@@ -40,9 +41,9 @@ Nico turns learning sources into lessons, quizzes, project work, and reports. Th
 ```bash
 ./dev.sh db:start     # MariaDB 10.11 container
 cd edge && cp .env.example .env && cd ..
-./dev.sh migrate      # schema, currently migrations 001–008
+./dev.sh migrate      # schema, currently migrations 001–011
 ./dev.sh serve        # http://127.0.0.1:8080 (20 MB upload limit)
-./dev.sh test         # 30 Sprint 1 + 47 M0 + 74 M1–M8 + 14 interface checks
+./dev.sh test         # 30 Sprint 1 + 47 M0 + 74 M1–M8 + 26 interface checks
 ```
 
 Register at `http://127.0.0.1:8080/register`, then open `/app`. `./dev.sh stop` stops the dev server.
@@ -50,11 +51,11 @@ Register at `http://127.0.0.1:8080/register`, then open `/app`. `./dev.sh stop` 
 ## Demo path
 
 **Admin**
-1. Sign in and open **Interns**.
-2. Open an intern.
-3. Add written material or a PDF.
-4. Generate a lesson and a quiz from that material.
-5. Open **Progress** to see completion and quiz scores.
+1. Sign in and open **Material**.
+2. Add written material or a PDF and select interns.
+3. Open an intern to generate a lesson/quiz from their material.
+4. Return to **Material** to see generated lessons/quizzes.
+5. Open **Progress** on an intern to see completion and quiz scores.
 
 **Intern**
 1. Sign in and land on **Home**.
@@ -163,7 +164,7 @@ Choose PDF → browser extracts text per page (pdf.js) → multipart POST with f
 ## Testing
 
 ```bash
-./dev.sh test          # 30 Sprint 1 + 47 M0 + 74 M1–M8 + 14 interface checks
+./dev.sh test          # 30 Sprint 1 + 47 M0 + 74 M1–M8 + 26 interface checks
 ./dev.sh test:m0       # M0 only
 ./dev.sh test:modules  # M1–M8 workflow only
 ./dev.sh test:interfaces  # Slice A two-app flow only
@@ -181,7 +182,7 @@ edge/
   src/Knowledge/         sources, chunks, PDF ingestion, vectors, hybrid search
   src/Interns/           assigned material and intern progress views
   src/Auth,Http,Projects,Tasks,Activities,...  remaining domain modules
-  migrations/            re-runnable schema migrations 001–008
+  migrations/            re-runnable schema migrations 001–011
   storage/files/         uploaded PDFs, outside the webroot
   storage/vectors/       local embedding files, outside the webroot
   tests/                 acceptance checks
